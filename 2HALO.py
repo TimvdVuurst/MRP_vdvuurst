@@ -39,6 +39,6 @@ def load_in_data(PATH: str) -> pd.DataFrame:
     })
 
     # Why was this added
-    df['INDEX_HOST_HALOS']=np.asarray(df.index)
+    df['INDEX_HOST_HALOS'] = np.asarray(df.index)
     
     return df
