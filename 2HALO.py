@@ -4,6 +4,15 @@ import swiftsimio as sio
 import os
 import h5py
 
+def extract_information_from_path(PATH: str):
+    sim = PATH.split('/')[4] #fourth subfolder is always the sim judging from ./net/
+
+    #of the form LxxxNxxx
+    boxsize = int(sim[1:4])
+    n_particles = int(sim[6:])
+
+    return boxsize, boxsize / 2, n_particles
+
 def load_in_data(PATH: str) -> pd.DataFrame:
     with h5py.File(PATH, "r") as handle:
         TotalMass = handle["ExclusiveSphere/100kpc/TotalMass"][:]
