@@ -1,0 +1,17 @@
+TO DO:
+
+- Kleine presentatie van resultaten tot nu toe
+- Lezen nieuwe paper
+- Sowmya's code opschonen en generaliseren
+- Code versnellen door metadata toe te passen
+- Meer papers lezen over:
+	- RSD modelling
+	- FOG & Kaiser effect
+	- (Skim) Flamingo paper
+	- GF review
+- Kies een beginpunt voor verder onderzoek en ga er mee bezig:
+	- 1halo dependence op massa
+	- MCMC fitting op 1halo model
+	- Better definition of velocities (2halo)
+	- How to go from vel. distribution to z-space (zie Jimi's thesis, this is more mathy)
+	- Starting with some general improvements of the 2halo model
