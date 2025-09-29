@@ -9,9 +9,11 @@ TO DO:
 	- FOG & Kaiser effect
 	- (Skim) Flamingo paper
 	- GF review
+	- Tinker 2007
+	- Streaming model papers
 - Kies een beginpunt voor verder onderzoek en ga er mee bezig:
 	- 1halo dependence op massa
 	- MCMC fitting op 1halo model
 	- Better definition of velocities (2halo)
-	- How to go from vel. distribution to z-space (zie Jimi's thesis, this is more mathy)
+	- How to go from vel. distribution to z-space (zie Jims thesis, this is more mathy, prob for the end of the project)
 	- Starting with some general improvements of the 2halo model

@@ -54,52 +54,62 @@ class TWOHALO:
         mass_mask = _make_mass_mask(self.FOFMass, *mass_range_primary) # mass bin of the primaries
         central_selection = self.IsCentral if only_centrals else np.ones_like(bound_mask).astype(bool) # pick out the centrals if so desired
         
-        # final mask for the primaries
+        # if primaries are *entirely* a subset of the secondaries, this should hold
+        primaries_are_subset = (mass_range_secondary[0] <= mass_range_primary[0]) & (mass_range_secondary[1] >= mass_range_primary[1])
+
+        # final mask for the primaries, select primaries
         primary_mask = bound_mask & mass_mask & central_selection
         primary_selection_size = np.sum(primary_mask)
-
-        # selection of the secondaries, differs only in mass range
-        secondary_mass_selection = _make_mass_mask(self.FOFMass, *mass_range_secondary) & bound_mask & central_selection
-        secondary_selection_size = secondary_mass_selection.sum()
-
-        ## DOESNT work because of the 2D arrays coords and vels
-        # # Create dtype for structured arrays
-        # names = ['POS','VEL','Mass','ID']
-        # formats = [np.float32, np.float32, np.float32, np.int64] # Same as in SOAP-HBT
-        # dtype = np.dtype({'names': names, 'formats': formats})
-
-        # Select the primaries
-        # primaries = np.zeros(shape=(primary_selection_size), dtype = dtype)
+                
         primary_pos = self.COM[primary_mask] % self.boxsize # Map all positions to periodic box
         primary_vel = self.COMvelocity[primary_mask]
         primary_mass = self.FOFmass[primary_mask]
         primary_ID = self.HaloCatalogueIndex[primary_mask] 
 
-        # Select the secondaries
-        # secondaries = np.zeros(shape=(secondary_selection_size), dtype = dtype)
+        # selection of the secondaries, differs only in mass range
+        # select secondaries
+        secondary_mass_selection = _make_mass_mask(self.FOFMass, *mass_range_secondary) & bound_mask & central_selection
+        secondary_selection_size = secondary_mass_selection.sum()
+
         secondary_pos = self.COM[secondary_mass_selection] % self.boxsize # Map all positions to periodic box
         secondary_vel = self.COMvelocity[secondary_mass_selection]
         secondary_mass = self.FOFMass[secondary_mass_selection]
         secondary_id = self.HaloCatalogueIndex[secondary_mass_selection]
 
-        # self_exclusion = [primary_ID[i] != secondary_id for i in range(primary_selection_size)] #Maybe this is very slow
-
-        radial_differences = secondary_pos[np.newaxis,:] - primary_pos[:,np.newaxis] # shape (N_primaries, N_secondaries, 3)
-        radial_differences = (radial_differences + self.half_boxsize) % self.boxsize - self.half_boxsize # map to periodic box, now in range [-box/2, box/2]
-        radial_differences = np.linalg.norm(radial_differences, axis=2) # shape (N_primaries, N_secondaries), 3D coordinates projected to 1D radial distance
-
-
         # TODO: Think of a better naming convention
         filename = f"data/velocity_data_M{str(mass_range_primary[0]).replace('.','_')}_{str(mass_range_primary[1]).replace('.','_')}.hdf5"
         with h5py.File(filename, "w") as f:
-            ## Second argument is shape and will just fill with zeroes. Since we blot out self-comparison
-            ## Running sowmya's code yields fields of size 767657375 which is exactly right with (primary_selection_size - 1) * secondary_selection_size for her example
-            ## So: set the size to the correct size as specified and just put the right things in the entire time. 
-
             dset_shape = ((primary_selection_size - 1), secondary_selection_size) # store as 2D array, so that we can pick out 2-halo terms individually
 
             # both radial distances and velocities are projected so that they're 1D
             dset_radial = f.create_dataset("radial_distances", dset_shape, dtype=np.float32, compression="gzip")
             dset_velocities = f.create_dataset("velocity_differences", dset_shape, dtype=np.float32, compression="gzip")
             dset_masses = f.create_dataset("masses", dset_shape, dtype=np.float32, compression="gzip")
+
+            # Keeping to the for loop since array manipulation would be too memory intensive and thus slower (tested)
+            counter = 0
+            # for primary_idx, (pos1, vel1, id1) in enumerate(zip(primary_pos, primary_vel, primary_ID)): #enumerate prob not needed
+            for pos1, vel1, id1 in zip(primary_pos, primary_vel, primary_ID):
+
+                self_compare_mask = secondary_id != id1 # Exclude self-comparison
+
+                # It may still occur that a primary is also a secondary 
+                # if the primaries are not entirely a subset of the secondaries
+                # But if they are entirely a subset we always have self-comparison to exclude
+                number_of_comparisons = (secondary_selection_size -1) if primaries_are_subset else self_compare_mask.sum()
+
+                # Positional differences with periodic boundary conditions, without self-comparison
+                pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_box) % self.box_size - self.half_box
+                radial_distances = np.linalg.norm(pos_diffs, axis=1) 
+                radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis] 
+
+                vel_diffs = secondary_vel[self_compare_mask] - vel1
+                projected_vels = np.einsum('ij,ij->i', vel_diffs, radial_unit_vectors) # Project velocity to line connecting halos
+
+                # Save to dset
+                dset_radial[counter:counter+number_of_comparisons] = radial_distances
+                dset_velocities[counter:counter+number_of_comparisons] = projected_vels
+                dset_radial[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask]
+
+                counter += number_of_comparisons
 

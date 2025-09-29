@@ -1,3 +1,4 @@
 data
 RSDenv
 *.h5
+__pycache__
