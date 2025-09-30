@@ -1,9 +1,6 @@
 TO DO:
 
-- Kleine presentatie van resultaten tot nu toe
-- Lezen nieuwe paper
 - Sowmya's code opschonen en generaliseren
-- Code versnellen door metadata toe te passen
 - Meer papers lezen over:
 	- RSD modelling
 	- FOG & Kaiser effect
@@ -11,6 +8,7 @@ TO DO:
 	- GF review
 	- Tinker 2007
 	- Streaming model papers
+	
 - Kies een beginpunt voor verder onderzoek en ga er mee bezig:
 	- 1halo dependence op massa
 	- MCMC fitting op 1halo model
