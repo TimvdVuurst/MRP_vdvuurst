@@ -4,16 +4,43 @@ import h5py
 from typing import Tuple
 import argparse
 from tqdm import tqdm
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from scipy.stats import skew, kurtosis
 
+def format_plot():
+    # Define some properties for the figures so that they look good
+    SMALL_SIZE = 10 * 2 
+    MEDIUM_SIZE = 12 * 2
+    BIGGER_SIZE = 14 * 2
 
-# def _extract_information_from_path(PATH: str):
-#     sim = PATH.split('/')[4] #fourth subfolder is always the sim judging from /net
+    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
+    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
+    plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
+    mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
+    mpl.rcParams['ytick.direction'] = 'in'
+    mpl.rcParams['xtick.direction'] = 'in'
+    mpl.rcParams['mathtext.fontset'] = 'cm'
+    mpl.rcParams['font.family'] = 'STIXgeneral'
 
-#     #of the form LxxxxNxxxx
-#     boxsize = int(sim[1:4]) # units of Mpc
-#     n_particles = int(sim[6:])
+    mpl.rcParams['figure.dpi'] = 100
 
-    # return boxsize, boxsize / 2, n_particles
+    mpl.rcParams['xtick.minor.visible'] = True
+    mpl.rcParams['ytick.minor.visible'] = True
+    mpl.rcParams['xtick.top'] = True
+    mpl.rcParams['ytick.right'] = True
+
+    mpl.rcParams['xtick.major.size'] = 10
+    mpl.rcParams['ytick.major.size'] = 10
+    mpl.rcParams['xtick.minor.size'] = 4
+    mpl.rcParams['ytick.minor.size'] = 4
+
+    mpl.rcParams['xtick.major.width'] = 1.25
+    mpl.rcParams['ytick.major.width'] = 1.25
+    mpl.rcParams['xtick.minor.width'] = 1
+    mpl.rcParams['ytick.minor.width'] = 1
 
 def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
     return (10**m_min <= mass) & (mass <= 10**m_max) # base 10 since FOF masses aren't in units of 10^10 Msol
@@ -48,6 +75,7 @@ class TWOHALO:
             N_bound (int, optional): _description_. Defaults to 100.
             only_centrals (bool, optional): _description_. Defaults to True.
         """
+        self.mass_range_primary = mass_range_primary
         bound_mask = _make_nbound_mask(self.NoofBoundParticles, N_bound)
         mass_mask = _make_mass_mask(self.FOFMass, *mass_range_primary) # mass bin of the primaries
         central_selection = self.IsCentral if only_centrals else np.ones_like(bound_mask).astype(bool) # pick out the centrals if so desired
@@ -72,13 +100,15 @@ class TWOHALO:
         primaries_are_subset = (intersection_length == primary_selection_size)
 
         # TODO: Think of a better naming convention?
-        filename = f"data/velocity_data_M{str(mass_range_primary[0]).replace('.','_')}_{str(mass_range_primary[1]).replace('.','_')}.hdf5"
-        print(f'\nNow working on {self.PATH}, writing to {filename}...\n')
+        self.filename = f"data/velocity_data_M{str(mass_range_primary[0]).replace('.','_')}_{str(mass_range_primary[1]).replace('.','_')}.hdf5"
+        print(f'\nNow working on {self.PATH}, writing to {self.filename}...\n')
 
+        # When avoiding self-comparison for primaries that might be a (partial) subset of the secondaries
+        # this generally holds
         dset_shape = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
                      (intersection_length * (secondary_selection_size - 1))
 
-        with h5py.File(filename, "w") as f:
+        with h5py.File(self.filename, "w") as f:
             # both radial distances and velocities are projected so that they're 1D
             dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32, compression="gzip")
             dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32, compression="gzip")
@@ -111,6 +141,77 @@ class TWOHALO:
 
                 counter += number_of_comparisons
 
+    def plot_velocity_histograms(self, savefig = True, showfig = False):
+        # Define radial bins
+        # TODO: verify this choice, does this need to be modifiable?
+        self.radial_bins = np.logspace(0.5, 2.7, 20).astype(np.float32)
+
+        with h5py.File(self.filename, "r") as f:
+            radial_distances = f["radial_distances"][:]
+            velocities = f["velocity_differences"][:]
+            
+        # np.max(radial_distances)
+        bin_indices = np.digitize(radial_distances, bins = self.radial_bins) - 1
+        num_bins = len(self.radial_bins) - 1  
+
+        num_cols = 3
+        num_rows = int(np.ceil(num_bins / num_cols))  
+
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 3))
+        axes = axes.flatten()  
+
+        self.mean, self.dispersion, self.skews, self.kurt = np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins)
+
+        for bin_idx in range(num_bins):
+            bin_mask = bin_indices == bin_idx
+            bin_velocities = velocities[bin_mask]
+            
+            if len(bin_velocities) == 0:
+                continue
+
+            self.mean[bin_idx] = np.mean(bin_velocities)
+            self.dispersion[bin_idx] = np.std(bin_velocities)
+            self.skews[bin_idx] = skew(bin_velocities)
+            self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False)
+
+            ax = axes[bin_idx]
+            ax.hist(bin_velocities, bins=50, alpha=0.75, color='b', edgecolor='black')
+            ax.set_xlabel("Velocity Difference ")
+            ax.set_ylabel("Count")
+            ax.set_title(f"Bin {bin_idx + 1}: {self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc")
+
+        # No clue what this does yet
+        for i in range(num_bins, len(axes)):
+            fig.delaxes(axes[i])
+
+        plt.tight_layout()
+        if savefig:
+            # TODO: find better filename structure
+            filename = f"plots/velocity_histograms_2halo_M{self.mass_range_primary[0]}_{self.mass_range_primary[1]}".replace('.','-')+".png"
+            plt.savefig(filename, dpi=200)
+        if showfig:
+            plt.show()
+    
+    def plot_moments(self, savefig = True, showfig = False):
+        fig,axes = plt.subplots(nrows = 4,figsize=(8,12), sharex=True, layout='tight')
+
+        axes[0].plot(self.radial_bins[:-1], self.mean, marker='s')
+        axes[0].set(ylabel = r'Mean $\mu$')
+        axes[1].plot(self.radial_bins[:-1], self.dispersion, marker = 's')
+        axes[1].set(ylabel = r'Dispersion $\sigma$')
+        axes[2].plot(self.radial_bins[:-1], self.skews, marker = 's')
+        axes[2].set(ylabel = r'Skewness $s$')
+        axes[3].plot(self.radial_bins[:-1], self.kurt, marker='s')
+        axes[3].set(xlabel = r'radial distance $r$', ylabel = r'Kurtosis $k$')
+
+        plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
+        if savefig:
+            filename = f"plots/moments_2halo_M{self.mass_range_primary[0]}_{self.mass_range_primary[1]}".replace('.','-')+".png"
+            plt.savefig(filename, dpi = 200)
+        if showfig:
+            plt.show()
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-P','--path', type = str,
@@ -120,6 +221,8 @@ def parse_args():
     # These two probably won't be touched but for the sake of generalizing they're included
     parser.add_argument('-N','--number_of_bound_particles', type = int, default = 100)
     parser.add_argument('-C','--only_centrals', type = bool, default = True)
+    parser.add_argument('-F','--make_figures', type = bool, default = False)
+    parser.add_argument('-SF','--show_figures', type = bool, default = True)
     
     return parser.parse_args()
 
@@ -131,6 +234,11 @@ if __name__ == '__main__':
                              mass_range_secondary = tuple(args.mass_range_secondary),
                              N_bound = args.number_of_bound_particles,
                              only_centrals = args.only_centrals)
+    
+    if args.make_figure:
+        format_plot()
+        twohalo.plot_velocity_histograms(savefig = True, showfig = args.show_figures)
+        twohalo.plot_moments(savefig = True, showfig = args.show_figures)
 
     print(f'\n CODE EXITED SUCCESFULLY.')
 

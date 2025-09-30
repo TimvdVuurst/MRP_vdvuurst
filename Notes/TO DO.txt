@@ -13,5 +13,20 @@ TO DO:
 	- 1halo dependence op massa
 	- MCMC fitting op 1halo model
 	- Better definition of velocities (2halo)
-	- How to go from vel. distribution to z-space (zie Jims thesis, this is more mathy, prob for the end of the project)
+	- How to go from vel. distribution to z-space (zie Jims thesis, this is more mathy, prob for ~the end of the project)
 	- Starting with some general improvements of the 2halo model
+
+
+MORE SPECIFIC:
+
+- In TWOHALO:
+	- Plotting is now part of the class. This is actually not a good idea, since you either have to run the entire catalogue first 
+      just to plot, or you need to specify every time if you want to run the catalogue or not. Solution: make different plotting file.
+	  Since you have to read in the data from the catalogue either way, it does not really matter. The class can still retain its 
+	  plotting capability since it could be useful for tests later on, but make sure that any changes are made in both the plotting file and 
+	  these functions.
+	- Think of a better naming structure for the catalogue files (and by extension the plots). Maybe Marcel has a good idea. 
+	- Are we going to keep the mass in the catalogue, feel like this is just bloat.
+
+- In ONEHALO:
+	- Begin
