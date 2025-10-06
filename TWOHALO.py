@@ -1,5 +1,4 @@
 import numpy as np
-import os
 import h5py
 from typing import Tuple
 import argparse
@@ -49,13 +48,14 @@ def _make_nbound_mask(bound: np.ndarray, N_min: np.float32):
     return bound >= N_min
 
 class TWOHALO:
-    def __init__(self, PATH: str):
+    def __init__(self, PATH: str, filename: str):
         self.PATH = PATH
+        self.filename = filename
+
         with h5py.File(PATH, "r") as handle:
-            self.TotalMass = handle["ExclusiveSphere/100kpc/TotalMass"][:]
             self.COMvelocity = handle["ExclusiveSphere/100kpc/CentreOfMassVelocity"][:]
             self.HaloCatalogueIndex = handle["InputHalos/HaloCatalogueIndex"][:]
-            self.FOFMass = handle["InputHalos/FOF/Masses"][:]
+            self.SOMass = handle['SO/200_mean/TotalMass'][:] #TODO: verify that this is a good choice
             self.NoofBoundParticles = handle["InputHalos/NumberOfBoundParticles"][:]
             self.COM = handle["ExclusiveSphere/100kpc/CentreOfMass"][:]
             self.IsCentral = handle["InputHalos/IsCentral"][:].astype(bool) #set to bool so it can be used as a mask
@@ -76,8 +76,10 @@ class TWOHALO:
             only_centrals (bool, optional): _description_. Defaults to True.
         """
         self.mass_range_primary = mass_range_primary
+        self.mass_range_secondary = mass_range_secondary
+
         bound_mask = _make_nbound_mask(self.NoofBoundParticles, N_bound)
-        mass_mask = _make_mass_mask(self.FOFMass, *mass_range_primary) # mass bin of the primaries
+        mass_mask = _make_mass_mask(self.SOMass, *mass_range_primary) # mass bin of the primaries
         central_selection = self.IsCentral if only_centrals else np.ones_like(bound_mask).astype(bool) # pick out the centrals if so desired
         
         # final mask for the primaries, select primaries
@@ -85,22 +87,21 @@ class TWOHALO:
         primary_selection_size = np.sum(primary_mask)
         primary_pos = self.COM[primary_mask] % self.boxsize # Map all positions to periodic box
         primary_vel = self.COMvelocity[primary_mask]
-        # primary_mass = self.FOFmass[primary_mask] # NOT USED
+        primary_mass = self.SOMass[primary_mask] # NOT USED
         primary_ID = self.HaloCatalogueIndex[primary_mask] 
 
         # selection of the secondaries, differs only in mass range
-        secondary_mass_selection = _make_mass_mask(self.FOFMass, *mass_range_secondary) & bound_mask & central_selection
+        secondary_mass_selection = _make_mass_mask(self.SOMass, *mass_range_secondary) & bound_mask & central_selection
         secondary_selection_size = secondary_mass_selection.sum()
         secondary_pos = self.COM[secondary_mass_selection] % self.boxsize # Map all positions to periodic box
         secondary_vel = self.COMvelocity[secondary_mass_selection]
-        secondary_mass = self.FOFMass[secondary_mass_selection]
+        secondary_mass = self.SOMass[secondary_mass_selection]
         secondary_ID = self.HaloCatalogueIndex[secondary_mass_selection]
 
         intersection_length = np.intersect1d(primary_ID, secondary_ID).shape[0] 
         primaries_are_subset = (intersection_length == primary_selection_size)
 
         # TODO: Think of a better naming convention?
-        self.filename = f"data/velocity_data_M{str(mass_range_primary[0]).replace('.','_')}_{str(mass_range_primary[1]).replace('.','_')}.hdf5"
         print(f'\nNow working on {self.PATH}, writing to {self.filename}...\n')
 
         # When avoiding self-comparison for primaries that might be a (partial) subset of the secondaries
@@ -110,14 +111,15 @@ class TWOHALO:
 
         with h5py.File(self.filename, "w") as f:
             # both radial distances and velocities are projected so that they're 1D
-            dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32, compression="gzip")
-            dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32, compression="gzip")
-            dset_masses = f.create_dataset("masses", (dset_shape,), dtype=np.float32, compression="gzip")
+            dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32)
+            dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32)
+            dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape,), dtype=np.float32)
+            dset_prim_masses = f.create_dataset("primary_masses", (primary_selection_size,), dtype=np.float32)
 
             # Keeping to a for loop since array manipulation would be too memory intensive and thus slower (tested)
             counter = 0
             number_of_comparisons = secondary_selection_size - 1 # Holds if primaries are subset
-            for pos1, vel1, id1 in tqdm(zip(primary_pos, primary_vel, primary_ID), total = len(primary_pos)):
+            for i,(pos1, vel1,mass1, id1) in tqdm(enumerate(zip(primary_pos, primary_vel,primary_mass, primary_ID)), total = len(primary_pos)):
                 self_compare_mask = secondary_ID != id1 # Exclude self-comparison
 
                 if not primaries_are_subset:
@@ -134,10 +136,8 @@ class TWOHALO:
 
                 dset_radial[counter:counter+number_of_comparisons] = radial_distances
                 dset_velocities[counter:counter+number_of_comparisons] = projected_vels
-                dset_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask]
-
-                # Since the file is of size 5 - 10 GB  (this depends on mass-range) presumably it is okay to keep it in RAM
-                # f.flush() #Not sure if this is advantageous runtime-wise
+                dset_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask]
+                dset_prim_masses[i] = mass1
 
                 counter += number_of_comparisons
 
@@ -150,7 +150,6 @@ class TWOHALO:
             radial_distances = f["radial_distances"][:]
             velocities = f["velocity_differences"][:]
             
-        # np.max(radial_distances)
         bin_indices = np.digitize(radial_distances, bins = self.radial_bins) - 1
         num_bins = len(self.radial_bins) - 1  
 
@@ -165,20 +164,21 @@ class TWOHALO:
         for bin_idx in range(num_bins):
             bin_mask = bin_indices == bin_idx
             bin_velocities = velocities[bin_mask]
-            
+
+            ax = axes[bin_idx]
+            ax.set_xlabel("Velocity Difference ")
+            ax.set_ylabel("Count")
+            ax.set_title(f"Bin {bin_idx + 1}: {self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc")
+
             if len(bin_velocities) == 0:
                 continue
 
             self.mean[bin_idx] = np.mean(bin_velocities)
             self.dispersion[bin_idx] = np.std(bin_velocities)
-            self.skews[bin_idx] = skew(bin_velocities)
-            self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False)
+            self.skews[bin_idx] = skew(bin_velocities, bias = False)
+            self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False, bias = False)
 
-            ax = axes[bin_idx]
             ax.hist(bin_velocities, bins=50, alpha=0.75, color='b', edgecolor='black')
-            ax.set_xlabel("Velocity Difference ")
-            ax.set_ylabel("Count")
-            ax.set_title(f"Bin {bin_idx + 1}: {self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc")
 
         # No clue what this does yet
         for i in range(num_bins, len(axes)):
@@ -187,13 +187,15 @@ class TWOHALO:
         plt.tight_layout()
         if savefig:
             # TODO: find better filename structure
-            filename = f"plots/velocity_histograms_2halo_M{self.mass_range_primary[0]}_{self.mass_range_primary[1]}".replace('.','-')+".png"
-            plt.savefig(filename, dpi=200)
+            filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_1{self.mass_range_primary[0]}-1{self.mass_range_primary[1]}_M2_1{self.mass_range_secondary[0]}-1{self.mass_range_secondary[1]}"+".png"
+            plt.savefig(filename, dpi=200,bbox_inches = 'tight')
         if showfig:
             plt.show()
+        
+        plt.close()
     
     def plot_moments(self, savefig = True, showfig = False):
-        fig,axes = plt.subplots(nrows = 4,figsize=(8,12), sharex=True, layout='tight')
+        fig,axes = plt.subplots(nrows = 4,figsize=(8,12), sharex=True)
 
         axes[0].plot(self.radial_bins[:-1], self.mean, marker='s')
         axes[0].set(ylabel = r'Mean $\mu$')
@@ -206,10 +208,12 @@ class TWOHALO:
 
         plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
         if savefig:
-            filename = f"plots/moments_2halo_M{self.mass_range_primary[0]}_{self.mass_range_primary[1]}".replace('.','-')+".png"
-            plt.savefig(filename, dpi = 200)
+            filename = f"/disks/cosmodm/vdvuurst/figures/moments_2halo_M1_1{self.mass_range_primary[0]}-1{self.mass_range_primary[1]}_M2_1{self.mass_range_secondary[0]}-1{self.mass_range_secondary[1]}"+".png"
+            plt.savefig(filename, dpi = 200, bbox_inches = 'tight')
         if showfig:
             plt.show()
+        
+        plt.close()
 
 
 def parse_args():
