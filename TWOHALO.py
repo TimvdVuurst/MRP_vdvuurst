@@ -85,7 +85,7 @@ class TWOHALO:
         # final mask for the primaries, select primaries
         primary_mask = bound_mask & mass_mask & central_selection
         primary_selection_size = np.sum(primary_mask)
-        primary_pos = self.COM[primary_mask] % self.boxsize # Map all positions to periodic box
+        primary_pos = self.COM[primary_mask] 
         primary_vel = self.COMvelocity[primary_mask]
         primary_mass = self.SOMass[primary_mask] # NOT USED
         primary_ID = self.HaloCatalogueIndex[primary_mask] 
@@ -93,7 +93,7 @@ class TWOHALO:
         # selection of the secondaries, differs only in mass range
         secondary_mass_selection = _make_mass_mask(self.SOMass, *mass_range_secondary) & bound_mask & central_selection
         secondary_selection_size = secondary_mass_selection.sum()
-        secondary_pos = self.COM[secondary_mass_selection] % self.boxsize # Map all positions to periodic box
+        secondary_pos = self.COM[secondary_mass_selection]
         secondary_vel = self.COMvelocity[secondary_mass_selection]
         secondary_mass = self.SOMass[secondary_mass_selection]
         secondary_ID = self.HaloCatalogueIndex[secondary_mass_selection]

@@ -25,8 +25,11 @@ MORE SPECIFIC:
 	  Since you have to read in the data from the catalogue either way, it does not really matter. The class can still retain its 
 	  plotting capability since it could be useful for tests later on, but make sure that any changes are made in both the plotting file and 
 	  these functions.
-	- Think of a better naming structure for the catalogue files (and by extension the plots). Maybe Marcel has a good idea. 
-	- Are we going to keep the mass in the catalogue, feel like this is just bloat.
+	- SUBSAMPLING: Think of a subsampling method to reduce the TWOHALO files of size >~50GB to 1% of the pairs, biased to the low distance end.
+	  We'll do this by a function that is constant until r ~ 10 Mpc and drops off slowly until it reaches 0 at r ~500 Mpc (or even sooner?)
+		- For now, subsample the files that we already have and then implement it in the code for new files
+		- check NUR sampling methods (need 2023 files on new laptop) - rn we're basically doing rejection sampling
+	- 
 
 - In ONEHALO:
 	- Begin
