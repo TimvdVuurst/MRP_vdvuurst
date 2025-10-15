@@ -104,8 +104,7 @@ class TWOHALO:
         # TODO: Think of a better naming convention?
         print(f'\nNow working on {self.PATH}, writing to {self.filename}...\n')
 
-        # When avoiding self-comparison for primaries that might be a (partial) subset of the secondaries
-        # this generally holds
+        # When avoiding self-comparison for primaries that might be a (partial) subset of the secondaries this generally holds
         dset_shape = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
                      (intersection_length * (secondary_selection_size - 1))
 
@@ -114,7 +113,7 @@ class TWOHALO:
             dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32)
             dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32)
             dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape,), dtype=np.float32)
-            dset_prim_masses = f.create_dataset("primary_masses", (primary_selection_size,), dtype=np.float32)
+            dset_prim_masses = f.create_dataset("primary_masses", (dset_shape,), dtype=np.float32)
 
             # Keeping to a for loop since array manipulation would be too memory intensive and thus slower (tested)
             counter = 0
@@ -128,7 +127,7 @@ class TWOHALO:
                 # Positional differences with periodic boundary conditions, without self-comparison
                 pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_boxsize) % self.boxsize - self.half_boxsize
                 radial_distances = np.linalg.norm(pos_diffs, axis=1) 
-                radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis] 
+                radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis]
 
                 # Project velocities to the connecting line between haloes
                 vel_diffs = secondary_vel[self_compare_mask] - vel1
@@ -137,7 +136,7 @@ class TWOHALO:
                 dset_radial[counter:counter+number_of_comparisons] = radial_distances
                 dset_velocities[counter:counter+number_of_comparisons] = projected_vels
                 dset_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask]
-                dset_prim_masses[i] = mass1
+                dset_prim_masses[counter:counter+number_of_comparisons] = np.full(number_of_comparisons, mass1) #fill with the same value to keep the same dset shape
 
                 counter += number_of_comparisons
 
