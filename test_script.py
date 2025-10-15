@@ -78,7 +78,7 @@ def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 30
             write_pointer += num_per_bin
 
 
-            
+
 #NOTE this function is only for subsampling non-written data, so the input is the datasets created in TWOHALO.py 
 # and before writing they're altered (requires reshaping)
 def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
@@ -86,7 +86,7 @@ def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_r
     # max_radius is the radial distance cut-off in Mpc
 
     #First step is a simple maximum filter
-    max_radius_mask = radii <= max_radius
+    max_radius_mask = np.array(radii) <= max_radius
     radii = radii[max_radius_mask]
     vels = vels[max_radius_mask]
     prim_masses = prim_masses[max_radius_mask]
@@ -116,8 +116,8 @@ def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_r
             bin_mask = (bin_idx == i)
             subsampled_radii[write_pointer:write_pointer + bin_count] = radii[bin_mask]
             subsampled_vels[write_pointer:write_pointer + bin_count] = vels[bin_mask]
-            subsampled_sec_masses[write_pointer:write_pointer + bin_count] = sec_masses[bin_mask]
             subsampled_prim_masses[write_pointer:write_pointer + bin_count] = prim_masses[bin_mask]
+            subsampled_sec_masses[write_pointer:write_pointer + bin_count] = sec_masses[bin_mask]
 
             write_pointer += bin_count
             continue
@@ -133,21 +133,27 @@ def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_r
         subsample_idx = np.random.choice(radii_in_bin.shape[0], num_per_bin, replace = False)
         subsampled_radii[write_pointer:write_pointer + num_per_bin] = radii_in_bin[subsample_idx]
         subsampled_vels[write_pointer:write_pointer + num_per_bin] = velocities_in_bin[subsample_idx]
-        subsampled_sec_masses[write_pointer:write_pointer + num_per_bin] = sec_masses_in_bin[subsample_idx]
         subsampled_prim_masses[write_pointer:write_pointer + num_per_bin] = prim_masses_in_bin[subsample_idx]
+        subsampled_sec_masses[write_pointer:write_pointer + num_per_bin] = sec_masses_in_bin[subsample_idx]
 
         write_pointer += num_per_bin
 
-    #here we have to resize which is a little slow
-    radii.resize(dset_shape)
-    vels.resize(dset_shape)
-    prim_masses.resize(dset_shape)
-    sec_masses.resize(dset_shape)
+    return subsampled_radii, subsampled_vels, subsampled_prim_masses, subsampled_sec_masses
 
-    radii[:dset_shape] = subsampled_radii
-    vels[:dset_shape] = subsampled_vels
-    prim_masses[:dset_shape] = subsampled_prim_masses
-    sec_masses[:dset_shape] = subsampled_sec_masses
+    ## THIS SHOULD BE DONE OUTSIDE OF THE FUNCTION SINCE THE MAX RADIUS FILTER CREATES A COPY
+    ## NOTE the copy takes up even more memory albeit temporarily
+
+    # #here we have to resize which is a little slow
+    # radii.resize(dset_shape)
+    # vels.resize(dset_shape)
+    # prim_masses.resize(dset_shape)
+    # sec_masses.resize(dset_shape)
+
+    # radii[:dset_shape] = subsampled_radii
+    # vels[:dset_shape] = subsampled_vels
+    # prim_masses[:dset_shape] = subsampled_prim_masses
+    # sec_masses[:dset_shape] = subsampled_sec_masses
+
 
 if __name__ == '__main__':
     pair_data_path = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_13.5-14.0_M2_14.5-15.0.hdf5'
