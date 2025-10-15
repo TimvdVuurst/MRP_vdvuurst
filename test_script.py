@@ -77,13 +77,20 @@ def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 30
 
             write_pointer += num_per_bin
 
+
+            
 #NOTE this function is only for subsampling non-written data, so the input is the datasets created in TWOHALO.py 
 # and before writing they're altered (requires reshaping)
 def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
     # num_per_bin is how many pairs we want to keep per radial bin
     # max_radius is the radial distance cut-off in Mpc
 
-    print('data loaded in')
+    #First step is a simple maximum filter
+    max_radius_mask = radii <= max_radius
+    radii = radii[max_radius_mask]
+    vels = vels[max_radius_mask]
+    prim_masses = prim_masses[max_radius_mask]
+    sec_masses = sec_masses[max_radius_mask]
 
     radial_bins = np.logspace(0, np.log10(max_radius), number_of_bins)
     bin_idx =  np.digitize(radii, radial_bins) - 1 # -1 to correct index offset i.e. it will index to the lower bound of the bin
