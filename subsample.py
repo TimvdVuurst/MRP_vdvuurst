@@ -1,6 +1,8 @@
 import os
 import numpy as np
 import h5py 
+from plotting import Plotter
+from tqdm import tqdm
 
 #NOTE this function is only for subsampling already existing data
 def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
@@ -18,7 +20,6 @@ def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 30
     if prim_masses.shape != sec_masses.shape:
         sec_per_prim = sec_masses.shape[0] // prim_masses.shape[0] #we can use integer division because we are sure that this is in fact an integer
         prim_masses = np.array([np.full(sec_per_prim, prim_masses[i]) for i in range(prim_masses.shape[0])]).flatten()
-    print('data loaded in')
 
     radial_bins = np.logspace(0, np.log10(max_radius), number_of_bins)
     bin_idx =  np.digitize(radii, radial_bins) - 1 # -1 to correct index offset i.e. it will index to the lower bound of the bin
@@ -76,7 +77,8 @@ def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 30
             dset_prim_masses[write_pointer:write_pointer + num_per_bin] = prim_masses_in_bin[subsample_idx]
 
             write_pointer += num_per_bin
-
+    
+    return new_filepath
 
 
 #NOTE this function is only for subsampling non-written data, so the input is the datasets created in TWOHALO.py 
@@ -156,5 +158,18 @@ def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_r
 
 
 if __name__ == '__main__':
-    pair_data_path = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_13.5-14.0_M2_14.5-15.0.hdf5'
-    subsample_existing_data(pair_data_path, overwrite = False)
+    datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
+    
+    for file in tqdm(reversed(sorted(os.listdir(datapath)))): # high mass primaries first
+        pair_data_path = os.path.join(datapath,file)
+        # tqdm.write(f'Now working on {pair_data_path}.')
+        if os.path.isfile(os.path.join(datapath+'_subsampled',file)): #if a subsample already exists we assuem the plots to also exist
+            continue
+
+        #TODO: check if the file to subsample is even large enough to do so
+        #cutoff: 50 GB
+
+        subsample_filepath = subsample_existing_data(pair_data_path, overwrite = False)
+        plotter = Plotter(subsample_filepath)
+        plotter.plot_velocity_histograms()
+        plotter.plot_moments()
