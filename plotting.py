@@ -102,8 +102,8 @@ class Plotter:
 if __name__ == '__main__':
     dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex_subsampled'
     # datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_12.5-13.0_M2_13.0-13.5.hdf5'
-
-    for file in tqdm(os.listdir(dir)):
+    
+    for file in tqdm(sorted(os.listdir(dir))[1:]):
         datapath = os.path.join(dir,file)
         plotter = Plotter(datapath)
         plotter.plot_velocity_histograms()
