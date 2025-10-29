@@ -2,7 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 from scipy.stats import skew, kurtosis
-
+import os
+from tqdm import tqdm
 
 class Plotter:
     def __init__(self, path: str):
@@ -40,7 +41,7 @@ class Plotter:
             ax = axes[bin_idx]
             ax.set_xlabel("Velocity Difference ")
             ax.set_ylabel("Count")
-            ax.set_title(f"Bin {bin_idx + 1}: {self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc")
+            ax.set_title(f"{self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc")
 
             if len(bin_velocities) == 0:
                 continue
@@ -56,14 +57,15 @@ class Plotter:
         for i in range(num_bins, len(axes)):
             fig.delaxes(axes[i])
 
+        # plt.suptitle(f'M1: {self.mass_range_primary[0]}-{self.mass_range_primary}[1], M2: {self.mass_range_secondary[0]}-self.mass')
         plt.tight_layout()
         if savefig:
             # TODO: find better filename structure
             if self.is_subsample:
                 filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             else:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
-            plt.savefig(filename, dpi=200,bbox_inches = 'tight')
+                filename = f"/disks/cosmodm/vdvuurst/figures/full_data/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+            plt.savefig(filename, dpi=300,bbox_inches = 'tight')
         if showfig:
             plt.show()
         
@@ -81,6 +83,9 @@ class Plotter:
         axes[3].plot(self.radial_bins[:-1], self.kurt, marker='s')
         axes[3].set(xlabel = r'radial distance $r$', ylabel = r'Kurtosis $k$')
 
+        for ax in axes:
+            ax.grid()
+
         plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
         if savefig:
             if self.is_subsample:
@@ -95,8 +100,11 @@ class Plotter:
 
 
 if __name__ == '__main__':
-    datapath = 'data/M12-15.5_0.5dex_subsampled/velocity_data_M1_13.5-14.0_M2_14.5-15.0.hdf5'
+    dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex_subsampled'
+    # datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_12.5-13.0_M2_13.0-13.5.hdf5'
 
-    plotter = Plotter(datapath)
-    plotter.plot_velocity_histograms()
-    plotter.plot_moments()
+    for file in tqdm(os.listdir(dir)):
+        datapath = os.path.join(dir,file)
+        plotter = Plotter(datapath)
+        plotter.plot_velocity_histograms()
+        plotter.plot_moments()

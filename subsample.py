@@ -160,16 +160,19 @@ def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_r
 if __name__ == '__main__':
     datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
     
-    for file in tqdm(reversed(sorted(os.listdir(datapath)))): # high mass primaries first
+    for file in reversed(sorted(os.listdir(datapath)))  : # high mass primaries first
         pair_data_path = os.path.join(datapath,file)
-        # tqdm.write(f'Now working on {pair_data_path}.')
-        if os.path.isfile(os.path.join(datapath+'_subsampled',file)): #if a subsample already exists we assuem the plots to also exist
+        print(f'Now working on {pair_data_path}...',end='')
+        if os.path.isfile(os.path.join(datapath+'_subsampled',file)): #if a subsample already exists we assu the plots to also exist
             continue
 
-        #TODO: check if the file to subsample is even large enough to do so
-        #cutoff: 50 GB
-
-        subsample_filepath = subsample_existing_data(pair_data_path, overwrite = False)
-        plotter = Plotter(subsample_filepath)
-        plotter.plot_velocity_histograms()
-        plotter.plot_moments()
+        #check if the file to subsample is even large enough to do so, cutoff: 50 GB
+        if os.path.getsize(pair_data_path)/ (1024**3) > 50:
+            subsample_filepath = subsample_existing_data(pair_data_path, overwrite = False)
+            plotter = Plotter(subsample_filepath)
+            plotter.plot_velocity_histograms()
+            plotter.plot_moments()
+        else:
+            os.rename(pair_data_path, os.path.join(datapath+'_subsampled',file))
+        
+        print('Done.')
