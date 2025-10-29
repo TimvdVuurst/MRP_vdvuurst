@@ -184,7 +184,7 @@ class TWOHALO:
 
         intersection_length = np.intersect1d(primary_ID, secondary_ID).shape[0] 
 
-        print(f'\nNow working on {self.PATH}, writing to {self.filename}...\n')
+        # print(f'\nNow working on {self.PATH}, writing to {self.filename}...\n')
 
         # When avoiding self-comparison for primaries that might be a (partial) subset of the secondaries this generally holds
         dset_shape_full = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
@@ -329,7 +329,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-P','--path', type = str,
                          default = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOAP-HBT/halo_properties_0077.hdf5")
-    parser.add_argument("-M1","--mass_range_primary", type = float, nargs = '+', default=[3.5,14])
+    parser.add_argument("-M1","--mass_range_primary", type = float, nargs = '+', default=[3.5,4])
     parser.add_argument("-M2","--mass_range_secondary", type = float, nargs = '+', default=[4.5,5])
     parser.add_argument('-F','--make_figures', type = bool, default = False)
     parser.add_argument('-SF','--show_figures', type = bool, default = True)
