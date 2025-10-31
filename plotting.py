@@ -1,9 +1,45 @@
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import h5py
 from scipy.stats import skew, kurtosis
 import os
 from tqdm import tqdm
+
+
+def format_plot():
+    # Define some properties for the figures so that they look good
+    SMALL_SIZE = 10 * 2 
+    MEDIUM_SIZE = 12 * 2
+    BIGGER_SIZE = 14 * 2
+
+    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
+    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
+    plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
+    mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
+    mpl.rcParams['ytick.direction'] = 'in'
+    mpl.rcParams['xtick.direction'] = 'in'
+    mpl.rcParams['mathtext.fontset'] = 'cm'
+    mpl.rcParams['font.family'] = 'STIXgeneral'
+
+    mpl.rcParams['figure.dpi'] = 100
+
+    mpl.rcParams['xtick.minor.visible'] = True
+    mpl.rcParams['ytick.minor.visible'] = True
+    mpl.rcParams['xtick.top'] = True
+    mpl.rcParams['ytick.right'] = True
+
+    mpl.rcParams['xtick.major.size'] = 10
+    mpl.rcParams['ytick.major.size'] = 10
+    mpl.rcParams['xtick.minor.size'] = 4
+    mpl.rcParams['ytick.minor.size'] = 4
+
+    mpl.rcParams['xtick.major.width'] = 1.25
+    mpl.rcParams['ytick.major.width'] = 1.25
+    mpl.rcParams['xtick.minor.width'] = 1
+    mpl.rcParams['ytick.minor.width'] = 1
 
 class Plotter:
     def __init__(self, path: str):
@@ -101,10 +137,15 @@ class Plotter:
 
 if __name__ == '__main__':
     dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex_subsampled'
-    # datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_12.5-13.0_M2_13.0-13.5.hdf5'
     
+    format_plot() #make plots pretty
+
     for file in tqdm(sorted(os.listdir(dir))[1:]):
         datapath = os.path.join(dir,file)
+
         plotter = Plotter(datapath)
+        plotname =  f"/disks/cosmodm/vdvuurst/figures/moments_2halo_subsample_M1_{plotter.mass_range_primary[0]}-{plotter.mass_range_primary[1]}_M2_{plotter.mass_range_secondary[0]}-{plotter.mass_range_secondary[1]}"+".png"
+        if os.path.isfile(plotname): #no overwriting
+            continue
         plotter.plot_velocity_histograms()
         plotter.plot_moments()

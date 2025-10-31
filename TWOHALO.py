@@ -6,6 +6,7 @@ from tqdm import tqdm
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from scipy.stats import skew, kurtosis
+from subsample import *
 
 def format_plot():
     # Define some properties for the figures so that they look good
@@ -59,7 +60,7 @@ class TWOHALO:
         with h5py.File(PATH, "r") as handle:
             self.COMvelocity = handle["ExclusiveSphere/100kpc/CentreOfMassVelocity"][:]
             self.HaloCatalogueIndex = handle["InputHalos/HaloCatalogueIndex"][:]
-            self.SOMass = handle['SO/200_mean/TotalMass'][:] #TODO: verify that this is a good choice
+            self.SOMass = handle['SO/200_mean/TotalMass'][:] 
             self.NoofBoundParticles = handle["InputHalos/NumberOfBoundParticles"][:]
             self.COM = handle["ExclusiveSphere/100kpc/CentreOfMass"][:]
             self.IsCentral = handle["InputHalos/IsCentral"][:].astype(bool) #set to bool so it can be used as a mask
@@ -182,25 +183,21 @@ class TWOHALO:
         secondary_mass = self.SOMass[secondary_mass_selection]
         secondary_ID = self.HaloCatalogueIndex[secondary_mass_selection]
 
-        intersection_length = np.intersect1d(primary_ID, secondary_ID).shape[0] 
+        intersection_length = np.intersect1d(primary_ID, secondary_ID).size
 
         # print(f'\nNow working on {self.PATH}, writing to {self.filename}...\n')
 
         # When avoiding self-comparison for primaries that might be a (partial) subset of the secondaries this generally holds
         dset_shape_full = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
                      (intersection_length * (secondary_selection_size - 1))
-        max_pairs = int(np.log10(300) // 0.2 * 1e7) # We want a maximum of 1e7 halo pairs for every 0.2 dex in binsize
-
-        selection_chance = np.min([max_pairs / dset_shape_full, 1]) # if max_pairs > dset_full we just select them all
 
         with h5py.File(self.filename, "w") as f:
             # both radial distances and velocities are projected so that they're 1D
-            dset_radial = f.create_dataset("radial_distances", (max_pairs,), maxshape=(max_pairs,), dtype=np.float32)
-            dset_velocities = f.create_dataset("velocity_differences", (max_pairs,), maxshape=(max_pairs,), dtype=np.float32)
-            dset_sec_masses = f.create_dataset("secondary_masses", (max_pairs,), maxshape=(max_pairs,), dtype=np.float32)
-            dset_prim_masses = f.create_dataset("primary_masses", (max_pairs,), maxshape=(max_pairs,), dtype=np.float32)
+            dset_radial = f.create_dataset("radial_distances", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
+            dset_velocities = f.create_dataset("velocity_differences", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
+            dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
+            dset_prim_masses = f.create_dataset("primary_masses", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
 
-            # Keeping to a for loop since array manipulation would be too memory intensive and thus slower (tested)
             counter = 0
             for i,(pos1, vel1,mass1, id1) in tqdm(enumerate(zip(primary_pos, primary_vel,primary_mass, primary_ID)), total = len(primary_pos)):
 
@@ -208,46 +205,34 @@ class TWOHALO:
 
                 # Positional differences with periodic boundary conditions, without self-comparison
                 pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_boxsize) % self.boxsize - self.half_boxsize
-                
-                # Set a cap on distance: at most self.radial_cutoff (= 300 Mpc default) along any 1 coordinate (taken absolutely)
-                radial_mask = _make_radial_mask(np.abs(pos_diffs), self.radial_cutoff)
-                pos_diffs  = pos_diffs[radial_mask]
-                #The actual amount of comparison we do
-                number_of_comparisons = radial_mask.sum()
+                radial_distances = np.linalg.norm(pos_diffs, axis=1) 
 
-                # Subsample further: only take a fraction of the viable pairs (or all of them if max_pairs > dset_shape_full)
-                if selection_chance == 1:
-                    selected_indx = np.arange(number_of_comparisons)
-                else:
-                    # With this choice every primary halo gets a small fraction of pairs to be selected. This more tightly controls how many pairs you keep per primary halo
-                    selected_indx = np.random.choice(np.arange(number_of_comparisons),np.int32(selection_chance * number_of_comparisons), replace = False)
+                #SUBSAMPLING!
+                #TODO: make rmin (and rmax?) parameters that can be controlled in this functionality.
+                radial_distances, selected_indx = rejection_sample(radial_distances, dropoff = power_dropoff, rmin = 20.13, rmax = 300) 
 
                 pos_diffs = pos_diffs[selected_indx]
-                number_of_comparisons = selected_indx.shape[0]
+                number_of_comparisons = selected_indx.size
 
                 # Project to line connecting the haloes
-                radial_distances = np.linalg.norm(pos_diffs, axis=1) 
                 radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis]
 
                 # Project velocities to the connecting line between haloes, use all relevant selections
-                vel_diffs = secondary_vel[self_compare_mask][radial_mask][selected_indx] - vel1
+                vel_diffs = secondary_vel[self_compare_mask][selected_indx] - vel1
                 projected_vels = np.einsum('ij,ij->i', vel_diffs, radial_unit_vectors)
 
                 dset_radial[counter:counter+number_of_comparisons] = radial_distances
                 dset_velocities[counter:counter+number_of_comparisons] = projected_vels
-                dset_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask][radial_mask][selected_indx]
+                dset_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask][selected_indx]
                 dset_prim_masses[counter:counter+number_of_comparisons] = np.full(number_of_comparisons, mass1) #fill with the same value to keep the same dset shape
 
                 counter += number_of_comparisons
             
             # make sure we don't save meaningless zeroes at the end
-            n_nonzero = np.nonzero(dset_radial)[0].shape[0]
-            if n_nonzero != max_pairs:
-                dset_radial.resize((n_nonzero,))
-                dset_velocities.resize((n_nonzero,))
-                dset_sec_masses.resize((n_nonzero,))
-                dset_prim_masses.resize((n_nonzero,))
-
+            dset_radial.resize((counter,))
+            dset_velocities.resize((counter,))
+            dset_sec_masses.resize((counter,))
+            dset_prim_masses.resize((counter,))
 
 
     def plot_velocity_histograms(self, savefig = True, showfig = False):
@@ -336,7 +321,6 @@ def parse_args():
     # These two probably won't be touched but for the sake of generalizing they're included
     parser.add_argument('-N','--number_of_bound_particles', type = int, default = 100)
     parser.add_argument('-C','--only_centrals', type = bool, default = True)
-
     
     return parser.parse_args()
 

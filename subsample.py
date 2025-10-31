@@ -4,86 +4,134 @@ import h5py
 from plotting import Plotter
 from tqdm import tqdm
 
-#NOTE this function is only for subsampling already existing data
-def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
-    # num_per_bin is how many pairs we want to keep per radial bin
-    # max_radius is the radial distance cut-off in Mpc
 
-    with h5py.File(pair_data_path,'r') as pair_data:
-        radii = pair_data['radial_distances'][:]
-        vels = pair_data['velocity_differences'][:]
-        prim_masses = pair_data['primary_masses'][:]
-        sec_masses = pair_data['secondary_masses'][:]
-    
-    # Overwrite prim_masses by a new array which is now filled with prim masses to keep the same shape across
-    #NOTE this is only relevant for old data so in the future this might become obsolete
-    if prim_masses.shape != sec_masses.shape:
-        sec_per_prim = sec_masses.shape[0] // prim_masses.shape[0] #we can use integer division because we are sure that this is in fact an integer
-        prim_masses = np.array([np.full(sec_per_prim, prim_masses[i]) for i in range(prim_masses.shape[0])]).flatten()
-
-    radial_bins = np.logspace(0, np.log10(max_radius), number_of_bins)
-    bin_idx =  np.digitize(radii, radial_bins) - 1 # -1 to correct index offset i.e. it will index to the lower bound of the bin
-
-    unique_bins, radial_bin_counts = np.unique(bin_idx, return_counts = True)
-
-    if overwrite:
-        new_filepath = pair_data_path
+def subsample_function(r, dropoff: callable, rmin = 20.13, rmax = 300):
+    if isinstance(r,float):
+        if r < rmin:
+            return 1
+        elif r > rmax:
+            return 0
+        else:
+            return dropoff(r, rmin = rmin, rmax = rmax)
     else:
-        head, tail = os.path.split(pair_data_path)
-        new_dir = os.path.join('/disks/cosmodm/vdvuurst/data', os.path.split(head)[1] + '_subsampled')
-        if not os.path.isdir(new_dir):
-            os.mkdir(new_dir)
-        new_filepath = os.path.join(new_dir, tail) 
+        region = (rmin < r) & (r < rmax)
+        return np.piecewise(r, [r <= rmin, region, rmax <= r],[1, dropoff(r[region],rmin=rmin, rmax=rmax), 0])
 
-   # How many do we keep in the new dataset; we set a per radial bin ceiling
-    dset_shape = radial_bin_counts[radial_bin_counts <= num_per_bin].sum() +\
-                 radial_bin_counts[radial_bin_counts > num_per_bin].shape[0] * num_per_bin
+def power_dropoff(r, rmin, rmax, alpha = 1.5):
+    a = 1 / (np.power(rmin,-alpha) - np.power(rmax,-1.5))
+    b = -a * np.power(rmax,-alpha)
+    return a * np.power(r,-alpha) + b
+
+def linear_dropoff(r, rmin, rmax):
+    a = 1 / (rmin - rmax)
+    b = - rmax * a 
+    return a * r + b
+
+def exponential_dropoff(r, rmin, rmax):
+    factor = 1 / (np.exp(rmax) - np.exp(rmin))
+    a = np.exp(rmin + rmax) * factor
+    b = - np.exp(rmin) * factor
+    return a*np.exp(r) + b
+
+def rejection_sample(r, dropoff: callable = power_dropoff, rmin = 20, rmax = 300, maximum = None):
+    rng = np.random.uniform(size = r.size)
+    subsample_probs = subsample_function(r.flatten(), dropoff = dropoff, rmin = rmin, rmax = rmax)
+    indices = np.where(rng <= subsample_probs)[0]
+    if maximum is None:
+        return r[indices], indices
+
+    r_sel = r[indices]
+    low_part_mask = r_sel <= rmin
+    low_part = r_sel[low_part_mask]
+    high_part_sel_indx = np.random.choice(np.arange(len(r_sel))[r_sel > rmin], size = maximum - low_part_mask.sum())
+
+    return np.concatenate((low_part, r_sel[high_part_sel_indx])), np.concatenate((indices[low_part_mask],indices[high_part_sel_indx]))
+
+
+
+
+
+# ##BELOW IS DEPRECATED
+
+# #NOTE this function is only for subsampling already existing data
+# def subsample_existing_data(pair_data_path, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
+#     # num_per_bin is how many pairs we want to keep per radial bin
+#     # max_radius is the radial distance cut-off in Mpc
+
+#     with h5py.File(pair_data_path,'r') as pair_data:
+#         radii = pair_data['radial_distances'][:]
+#         vels = pair_data['velocity_differences'][:]
+#         prim_masses = pair_data['primary_masses'][:]
+#         sec_masses = pair_data['secondary_masses'][:]
     
-    with h5py.File(new_filepath,'w') as f:
-        dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32)
-        dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32)
-        dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape,), dtype=np.float32)
-        dset_prim_masses = f.create_dataset("primary_masses", (dset_shape,), dtype=np.float32)
+#     # Overwrite prim_masses by a new array which is now filled with prim masses to keep the same shape across
+#     #NOTE this is only relevant for old data so in the future this might become obsolete
+#     if prim_masses.shape != sec_masses.shape:
+#         sec_per_prim = sec_masses.shape[0] // prim_masses.shape[0] #we can use integer division because we are sure that this is in fact an integer
+#         prim_masses = np.array([np.full(sec_per_prim, prim_masses[i]) for i in range(prim_masses.shape[0])]).flatten()
 
-        write_pointer = 0
-        # for i,(bin,bin_count) in enumerate(zip(radial_bins,radial_bin_counts)):
-        for i in range(number_of_bins):
-            if i not in unique_bins: #i.e. there are no halo pairs in this radial bin
-                continue
+#     radial_bins = np.logspace(0, np.log10(max_radius), number_of_bins)
+#     bin_idx =  np.digitize(radii, radial_bins) - 1 # -1 to correct index offset i.e. it will index to the lower bound of the bin
 
-            bin_count = radial_bin_counts[unique_bins == i][0] #some low radius bins may not have any pairs so this is correct indexing
-            if bin_count <= num_per_bin: 
-                bin_mask = (bin_idx == i)
-                dset_radial[write_pointer:write_pointer + bin_count] = radii[bin_mask]
-                dset_velocities[write_pointer:write_pointer + bin_count] = vels[bin_mask]
-                dset_sec_masses[write_pointer:write_pointer + bin_count] = sec_masses[bin_mask]
-                dset_prim_masses[write_pointer:write_pointer + bin_count] = prim_masses[bin_mask]
+#     unique_bins, radial_bin_counts = np.unique(bin_idx, return_counts = True)
 
-                write_pointer += bin_count
-                continue
+#     if overwrite:
+#         new_filepath = pair_data_path
+#     else:
+#         head, tail = os.path.split(pair_data_path)
+#         new_dir = os.path.join('/disks/cosmodm/vdvuurst/data', os.path.split(head)[1] + '_subsampled')
+#         if not os.path.isdir(new_dir):
+#             os.mkdir(new_dir)
+#         new_filepath = os.path.join(new_dir, tail) 
+
+#    # How many do we keep in the new dataset; we set a per radial bin ceiling
+#     dset_shape = radial_bin_counts[radial_bin_counts <= num_per_bin].sum() +\
+#                  radial_bin_counts[radial_bin_counts > num_per_bin].shape[0] * num_per_bin
+    
+#     with h5py.File(new_filepath,'w') as f:
+#         dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32)
+#         dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32)
+#         dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape,), dtype=np.float32)
+#         dset_prim_masses = f.create_dataset("primary_masses", (dset_shape,), dtype=np.float32)
+
+#         write_pointer = 0
+#         # for i,(bin,bin_count) in enumerate(zip(radial_bins,radial_bin_counts)):
+#         for i in range(number_of_bins):
+#             if i not in unique_bins: #i.e. there are no halo pairs in this radial bin
+#                 continue
+
+#             bin_count = radial_bin_counts[unique_bins == i][0] #some low radius bins may not have any pairs so this is correct indexing
+#             if bin_count <= num_per_bin: 
+#                 bin_mask = (bin_idx == i)
+#                 dset_radial[write_pointer:write_pointer + bin_count] = radii[bin_mask]
+#                 dset_velocities[write_pointer:write_pointer + bin_count] = vels[bin_mask]
+#                 dset_sec_masses[write_pointer:write_pointer + bin_count] = sec_masses[bin_mask]
+#                 dset_prim_masses[write_pointer:write_pointer + bin_count] = prim_masses[bin_mask]
+
+#                 write_pointer += bin_count
+#                 continue
             
-            #if the above catches aren't activated we have to subsample
-            bin_mask = bin_idx == i
-            radii_in_bin = radii[bin_mask]
-            velocities_in_bin = vels[bin_mask]
-            sec_masses_in_bin = sec_masses[bin_mask]
-            prim_masses_in_bin = prim_masses[bin_mask]
+#             #if the above catches aren't activated we have to subsample
+#             bin_mask = bin_idx == i
+#             radii_in_bin = radii[bin_mask]
+#             velocities_in_bin = vels[bin_mask]
+#             sec_masses_in_bin = sec_masses[bin_mask]
+#             prim_masses_in_bin = prim_masses[bin_mask]
 
-            # WE LOSE ORDERING! is this bad? not if we lose the ordering in the same way across the dsets
-            subsample_idx = np.random.choice(radii_in_bin.shape[0], num_per_bin, replace = False)
-            dset_radial[write_pointer:write_pointer + num_per_bin] = radii_in_bin[subsample_idx]
-            dset_velocities[write_pointer:write_pointer + num_per_bin] = velocities_in_bin[subsample_idx]
-            dset_sec_masses[write_pointer:write_pointer + num_per_bin] = sec_masses_in_bin[subsample_idx]
-            dset_prim_masses[write_pointer:write_pointer + num_per_bin] = prim_masses_in_bin[subsample_idx]
+#             # WE LOSE ORDERING! is this bad? not if we lose the ordering in the same way across the dsets
+#             subsample_idx = np.random.choice(radii_in_bin.shape[0], num_per_bin, replace = False)
+#             dset_radial[write_pointer:write_pointer + num_per_bin] = radii_in_bin[subsample_idx]
+#             dset_velocities[write_pointer:write_pointer + num_per_bin] = velocities_in_bin[subsample_idx]
+#             dset_sec_masses[write_pointer:write_pointer + num_per_bin] = sec_masses_in_bin[subsample_idx]
+#             dset_prim_masses[write_pointer:write_pointer + num_per_bin] = prim_masses_in_bin[subsample_idx]
 
-            write_pointer += num_per_bin
+#             write_pointer += num_per_bin
     
-    return new_filepath
+#     return new_filepath
 
-
-#NOTE this function is only for subsampling non-written data, so the input is the datasets created in TWOHALO.py 
-# and before writing they're altered (requires reshaping)
-def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
+# #NOTE this function is only for subsampling non-written data, so the input is the datasets created in TWOHALO.py 
+# # and before writing they're altered (requires reshaping)
+# def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_radius = 300, num_per_bin = int(1e7), overwrite = False):
     # num_per_bin is how many pairs we want to keep per radial bin
     # max_radius is the radial distance cut-off in Mpc
 
@@ -157,22 +205,24 @@ def subsample_data(radii,vels,prim_masses,sec_masses, number_of_bins = 20, max_r
     # sec_masses[:dset_shape] = subsampled_sec_masses
 
 
-if __name__ == '__main__':
-    datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
+# if __name__ == '__main__':
+    # datapath = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
     
-    for file in reversed(sorted(os.listdir(datapath)))  : # high mass primaries first
-        pair_data_path = os.path.join(datapath,file)
-        print(f'Now working on {pair_data_path}...',end='')
-        if os.path.isfile(os.path.join(datapath+'_subsampled',file)): #if a subsample already exists we assu the plots to also exist
-            continue
+    # for file in reversed(sorted(os.listdir(datapath)))  : # high mass primaries first
+    #     pair_data_path = os.path.join(datapath,file)
+    #     print(f'Now working on {pair_data_path}...',end='')
+    #     if os.path.isfile(os.path.join(datapath+'_subsampled',file)): #if a subsample already exists we assu the plots to also exist
+    #         continue
 
-        #check if the file to subsample is even large enough to do so, cutoff: 50 GB
-        if os.path.getsize(pair_data_path)/ (1024**3) > 50:
-            subsample_filepath = subsample_existing_data(pair_data_path, overwrite = False)
-            plotter = Plotter(subsample_filepath)
-            plotter.plot_velocity_histograms()
-            plotter.plot_moments()
-        else:
-            os.rename(pair_data_path, os.path.join(datapath+'_subsampled',file))
+    #     #check if the file to subsample is even large enough to do so, cutoff: 50 GB
+    #     if os.path.getsize(pair_data_path)/ (1024**3) > 50:
+    #         subsample_filepath = subsample_existing_data(pair_data_path, overwrite = False)
+    #         plotter = Plotter(subsample_filepath)
+    #         plotter.plot_velocity_histograms()
+    #         plotter.plot_moments()
+    #     else:
+    #         os.rename(pair_data_path, os.path.join(datapath+'_subsampled',file))
         
-        print('Done.')
+    #     print('Done.')
+
+

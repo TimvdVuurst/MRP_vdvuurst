@@ -28,12 +28,16 @@ data_dir = os.path.join(BASEPATH,f'data/M1{args.lower_mass}-1{args.upper_mass-ar
 if not os.path.isdir(data_dir):
     os.mkdir(data_dir)
 
-for bin_prim, bin_sec in reversed(bin_combis): # Start from the high mass bins, these are much smaller   
-    bin_prim, bin_sec = tuple(bin_prim), tuple(bin_sec) 
+# initializing the class reads in the SOAP file, we only need to do this once
+# but just set the filename to which we save to a different value every time
+twohalo = TWOHALO(PATH = args.path_to_soap, filename = None)
 
+for bin_prim, bin_sec in reversed(bin_combis): # Start from the high mass bins, these are much less of these pairs
+
+    bin_prim, bin_sec = tuple(bin_prim), tuple(bin_sec) 
     catalogue_file = create_filename_from_mass_range(data_dir, bin_prim, bin_sec)
+    twohalo.filename = catalogue_file
     file_exists = os.path.isfile(catalogue_file)
-    twohalo = TWOHALO(PATH = args.path_to_soap, filename = catalogue_file)
 
     print(f"WORKING ON MASS BINS: PRIMARY {bin_prim} -  SECONDARY {bin_sec}")
 
@@ -44,8 +48,10 @@ for bin_prim, bin_sec in reversed(bin_combis): # Start from the high mass bins, 
         if file_exists:
             print(f'{catalogue_file} already exists, overwriting...\n')
 
-        # Bottleneck
-        twohalo.create_subsampled_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
+        if bin_prim[0] <= 13.5 and bin_sec[0] != 15.: #there many pairs in these cases
+            twohalo.create_subsampled_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
+        else:  # no subsampling needed in the other cases
+            twohalo.create_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
 
     format_plot()
     # twohalo.plot_velocity_histograms()
