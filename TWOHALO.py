@@ -199,7 +199,7 @@ class TWOHALO:
             dset_prim_masses = f.create_dataset("primary_masses", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
 
             counter = 0
-            for i,(pos1, vel1,mass1, id1) in tqdm(enumerate(zip(primary_pos, primary_vel,primary_mass, primary_ID)), total = len(primary_pos)):
+            for pos1, vel1,mass1, id1 in tqdm(zip(primary_pos, primary_vel,primary_mass, primary_ID), total = len(primary_pos)):
 
                 self_compare_mask = secondary_ID != id1 # Exclude self-comparison
 

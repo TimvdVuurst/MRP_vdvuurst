@@ -24,7 +24,7 @@ bin_combis = np.array(list(combinations_with_replacement(mass_bins,2)))
 
 #TODO rename existing data folder
 BASEPATH = '/disks/cosmodm/vdvuurst'
-data_dir = os.path.join(BASEPATH,f'data/M1{args.lower_mass}-1{args.upper_mass-args.step}_{args.step}dex_subsampled')
+data_dir = os.path.join(BASEPATH,f'data/M1{args.lower_mass}-1{args.upper_mass-args.step}_{args.step}dex')
 if not os.path.isdir(data_dir):
     os.mkdir(data_dir)
 
@@ -51,7 +51,7 @@ for bin_prim, bin_sec in reversed(bin_combis): # Start from the high mass bins, 
         if bin_prim[0] <= 13.5 and bin_sec[0] != 15.: #there many pairs in these cases
             twohalo.create_subsampled_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
         else:  # no subsampling needed in the other cases
-            twohalo.create_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
+            twohalo.create_full_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
 
     format_plot()
     # twohalo.plot_velocity_histograms()

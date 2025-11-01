@@ -100,7 +100,7 @@ class Plotter:
             if self.is_subsample:
                 filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             else:
-                filename = f"/disks/cosmodm/vdvuurst/figures/full_data/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             plt.savefig(filename, dpi=300,bbox_inches = 'tight')
         if showfig:
             plt.show()
@@ -136,7 +136,7 @@ class Plotter:
 
 
 if __name__ == '__main__':
-    dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex_subsampled'
+    dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
     
     format_plot() #make plots pretty
 
@@ -148,4 +148,4 @@ if __name__ == '__main__':
         if os.path.isfile(plotname): #no overwriting
             continue
         plotter.plot_velocity_histograms()
-        plotter.plot_moments()
+        # plotter.plot_moments()

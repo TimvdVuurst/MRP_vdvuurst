@@ -18,7 +18,7 @@ def subsample_function(r, dropoff: callable, rmin = 20.13, rmax = 300):
         return np.piecewise(r, [r <= rmin, region, rmax <= r],[1, dropoff(r[region],rmin=rmin, rmax=rmax), 0])
 
 def power_dropoff(r, rmin, rmax, alpha = 1.5):
-    a = 1 / (np.power(rmin,-alpha) - np.power(rmax,-1.5))
+    a = 1 / (np.power(rmin,-alpha) - np.power(rmax,-alpha))
     b = -a * np.power(rmax,-alpha)
     return a * np.power(r,-alpha) + b
 
