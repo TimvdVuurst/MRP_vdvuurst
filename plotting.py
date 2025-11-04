@@ -143,9 +143,15 @@ if __name__ == '__main__':
     for file in tqdm(sorted(os.listdir(dir))[1:]):
         datapath = os.path.join(dir,file)
 
-        plotter = Plotter(datapath)
-        plotname =  f"/disks/cosmodm/vdvuurst/figures/moments_2halo_subsample_M1_{plotter.mass_range_primary[0]}-{plotter.mass_range_primary[1]}_M2_{plotter.mass_range_secondary[0]}-{plotter.mass_range_secondary[1]}"+".png"
+        
+        info = datapath.split('_')
+        mass_range_primary = np.array(info[-3].split('-')).astype(np.float32)
+        mass_range_secondary = np.array(info[-1].split('.hdf5')[0].split('-')).astype(np.float32)
+        plotname =  f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
+        
         if os.path.isfile(plotname): #no overwriting
             continue
+
+        plotter = Plotter(datapath)
         plotter.plot_velocity_histograms()
-        # plotter.plot_moments()
+        # # plotter.plot_moments()
