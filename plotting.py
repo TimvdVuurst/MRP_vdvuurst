@@ -81,6 +81,7 @@ class Plotter:
                 continue
 
             ax.hist(bin_velocities, bins=50, alpha=0.75, color='b', edgecolor='black')
+            # ax.ticklabel_format(useOffset=False, style='plain') # no scientific notation
 
         # No clue what this does yet
         for i in range(num_bins, len(axes)):

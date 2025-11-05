@@ -9,12 +9,7 @@ from scipy.optimize import root, minimize
 
 from TWOHALO import _make_nbound_mask
 
-def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
-    if m_min in [0,np.nan, None]:
-        return (mass <= 10**m_max)
-    elif m_max in [0,np.nan, None]:
-        return (10**m_min <= mass)
-    return (10**m_min <= mass) & (mass <= 10**m_max) 
+
 
 class ONEHALO:
     def __init__(self, PATH: str, filename: str, massbin: Tuple[np.float32,np.float32]):
@@ -39,5 +34,22 @@ class ONEHALO:
         self.half_boxsize = self.boxsize / 2
         self.COM = self.COM % self.boxsize #if any coordinate value is negative or larger than box size - map into the box
 
+    @staticmethod
+    def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
+        if m_min in [0,-1,np.nan, None]:
+            return (mass <= 10**m_max)
+        elif m_max in [0,-1,np.nan, None]:
+            return (10**m_min <= mass)
+        return (10**m_min <= mass) & (mass <= 10**m_max) 
+    
     def velocity(self):
-        pass
+        #FOFMass of non-centrals = 0, so mass_mask implicitly picks out centrals
+        mass_mask = self._make_mass_mask(self.FOFMass, self.lower_mass, self.upper_mass) 
+
+        # gets all the subhaloes belonging to the centrals we picked out with the mass bin
+        subhalo_mask = np.isin(self.HostHaloIndex, np.where(mass_mask)[0])  
+
+        HostHaloIDs, subhalos_per_host = np.unique(self.HostHaloIndex[subhalo_mask], return_counts = True)
+        
+        # sorter = np.argsort(self.HostHaloIndex[subhalo_mask]) 
+
