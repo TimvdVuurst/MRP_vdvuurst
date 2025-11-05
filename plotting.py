@@ -68,8 +68,6 @@ class Plotter:
         fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 3))
         axes = axes.flatten()  
 
-        self.mean, self.dispersion, self.skews, self.kurt = np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins)
-
         for bin_idx in range(num_bins):
             bin_mask = bin_indices == bin_idx
             bin_velocities = self.velocities[bin_mask]
@@ -82,11 +80,6 @@ class Plotter:
             if len(bin_velocities) == 0:
                 continue
 
-            self.mean[bin_idx] = np.mean(bin_velocities)
-            self.dispersion[bin_idx] = np.std(bin_velocities)
-            self.skews[bin_idx] = skew(bin_velocities, bias = False)
-            self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False, bias = False)
-
             ax.hist(bin_velocities, bins=50, alpha=0.75, color='b', edgecolor='black')
 
         # No clue what this does yet
@@ -98,17 +91,36 @@ class Plotter:
         if savefig:
             # TODO: find better filename structure
             if self.is_subsample:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             else:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             plt.savefig(filename, dpi=300,bbox_inches = 'tight')
         if showfig:
             plt.show()
         
         plt.close()
 
-    def plot_moments(self, savefig = True, showfig = False):
+    def plot_moments(self, max_radius = 300, number_of_bins = 20, savefig = True, showfig = False):
+        self.radial_bins = np.logspace(0, np.log10(max_radius), number_of_bins)
+
+        bin_indices = np.digitize(self.radial_distances, bins = self.radial_bins) - 1
+        num_bins = len(self.radial_bins) - 1  
+
+        self.mean, self.dispersion, self.skews, self.kurt = np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins)
+        
         fig,axes = plt.subplots(nrows = 4,figsize=(8,12), sharex=True)
+
+        for bin_idx in range(num_bins):
+            bin_mask = bin_indices == bin_idx
+            bin_velocities = self.velocities[bin_mask]
+
+            if len(bin_velocities) == 0:
+                continue
+
+            self.mean[bin_idx] = np.mean(bin_velocities)
+            self.dispersion[bin_idx] = np.std(bin_velocities)
+            self.skews[bin_idx] = skew(bin_velocities, bias = False)
+            self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False, bias = False)
 
         axes[0].plot(self.radial_bins[:-1], self.mean, marker='s')
         axes[0].set(ylabel = r'Mean $\mu$')
@@ -125,9 +137,9 @@ class Plotter:
         plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
         if savefig:
             if self.is_subsample:
-                filename = f"/disks/cosmodm/vdvuurst/figures/moments_2halo_subsample_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_subsample_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             else:
-                filename = f"/disks/cosmodm/vdvuurst/figures/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             plt.savefig(filename, dpi = 200, bbox_inches = 'tight')
         if showfig:
             plt.show()
@@ -147,11 +159,12 @@ if __name__ == '__main__':
         info = datapath.split('_')
         mass_range_primary = np.array(info[-3].split('-')).astype(np.float32)
         mass_range_secondary = np.array(info[-1].split('.hdf5')[0].split('-')).astype(np.float32)
-        plotname =  f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
+        # plotname =  f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
+        plotname =  f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
         
         if os.path.isfile(plotname): #no overwriting
             continue
 
         plotter = Plotter(datapath)
-        plotter.plot_velocity_histograms()
-        # # plotter.plot_moments()
+        # plotter.plot_velocity_histograms()
+        plotter.plot_moments()

@@ -113,37 +113,51 @@ class TWOHALO:
         dset_shape = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
                      (intersection_length * (secondary_selection_size - 1))
 
+        # Keeping to a for loop since array manipulation would be too memory intensive and thus slower (tested)
+        # Save everything in memory to mitigate I/O usage throughout
+        array_radial = np.zeros(dset_shape, dtype = np.float32)
+        array_velocities = np.zeros(dset_shape, dtype = np.float32)
+        array_prim_masses = np.zeros(dset_shape, dtype = np.float32)
+        array_sec_masses = np.zeros(dset_shape, dtype = np.float32)
+
+        counter = 0
+        number_of_comparisons = secondary_selection_size - 1 # Holds if primaries are subset
+        for pos1, vel1,mass1, id1 in tqdm(zip(primary_pos, primary_vel,primary_mass, primary_ID), total = len(primary_pos)):
+            self_compare_mask = secondary_ID != id1 # Exclude self-comparison
+
+            if not primaries_are_subset:
+                number_of_comparisons = self_compare_mask.sum()
+
+            # Positional differences with periodic boundary conditions, without self-comparison
+            pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_boxsize) % self.boxsize - self.half_boxsize
+            radial_distances = np.linalg.norm(pos_diffs, axis=1) 
+            radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis]
+
+            # Project velocities to the connecting line between haloes
+            vel_diffs = secondary_vel[self_compare_mask] - vel1
+            projected_vels = np.einsum('ij,ij->i', vel_diffs, radial_unit_vectors)
+
+            array_radial[counter:counter+number_of_comparisons] = radial_distances
+            array_velocities[counter:counter+number_of_comparisons] = projected_vels
+            array_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask]
+            array_prim_masses[counter:counter+number_of_comparisons] = np.full(number_of_comparisons, mass1) #fill with the same value to keep the same dset shape
+
+            counter += number_of_comparisons
+
+        # make sure we don't save meaningless zeroes at the end
+        nonzero_idx = np.nonzero(array_radial) #holds across all arrays so we need only calculate it once
+        array_radial = array_radial[nonzero_idx]
+        array_velocities = array_velocities[nonzero_idx]
+        array_sec_masses = array_sec_masses[nonzero_idx]
+        array_prim_masses = array_prim_masses[nonzero_idx]
+
+        # This is the only IO
         with h5py.File(self.filename, "w") as f:
-            # both radial distances and velocities are projected so that they're 1D
-            dset_radial = f.create_dataset("radial_distances", (dset_shape,), dtype=np.float32)
-            dset_velocities = f.create_dataset("velocity_differences", (dset_shape,), dtype=np.float32)
-            dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape,), dtype=np.float32)
-            dset_prim_masses = f.create_dataset("primary_masses", (dset_shape,), dtype=np.float32)
+            _ = f.create_dataset("radial_distances", data = array_radial, dtype=np.float32)
+            _ = f.create_dataset("velocity_differences", data = array_velocities, dtype=np.float32)
+            _ = f.create_dataset("secondary_masses", data = array_sec_masses, dtype=np.float32)
+            _ = f.create_dataset("primary_masses", data = array_prim_masses, dtype=np.float32)
 
-            # Keeping to a for loop since array manipulation would be too memory intensive and thus slower (tested)
-            counter = 0
-            number_of_comparisons = secondary_selection_size - 1 # Holds if primaries are subset
-            for i,(pos1, vel1,mass1, id1) in tqdm(enumerate(zip(primary_pos, primary_vel,primary_mass, primary_ID)), total = len(primary_pos)):
-                self_compare_mask = secondary_ID != id1 # Exclude self-comparison
-
-                if not primaries_are_subset:
-                    number_of_comparisons = self_compare_mask.sum()
-
-                # Positional differences with periodic boundary conditions, without self-comparison
-                pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_boxsize) % self.boxsize - self.half_boxsize
-                radial_distances = np.linalg.norm(pos_diffs, axis=1) 
-                radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis]
-
-                # Project velocities to the connecting line between haloes
-                vel_diffs = secondary_vel[self_compare_mask] - vel1
-                projected_vels = np.einsum('ij,ij->i', vel_diffs, radial_unit_vectors)
-
-                dset_radial[counter:counter+number_of_comparisons] = radial_distances
-                dset_velocities[counter:counter+number_of_comparisons] = projected_vels
-                dset_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask]
-                dset_prim_masses[counter:counter+number_of_comparisons] = np.full(number_of_comparisons, mass1) #fill with the same value to keep the same dset shape
-
-                counter += number_of_comparisons
 
     def create_subsampled_catalogue(self, mass_range_primary: Tuple[np.float32,np.float32],
                           mass_range_secondary: Tuple[np.float32,np.float32],
@@ -191,48 +205,57 @@ class TWOHALO:
         dset_shape_full = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
                      (intersection_length * (secondary_selection_size - 1))
 
-        with h5py.File(self.filename, "w") as f:
             # both radial distances and velocities are projected so that they're 1D
-            dset_radial = f.create_dataset("radial_distances", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
-            dset_velocities = f.create_dataset("velocity_differences", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
-            dset_sec_masses = f.create_dataset("secondary_masses", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
-            dset_prim_masses = f.create_dataset("primary_masses", (dset_shape_full//20,), maxshape=(dset_shape_full,), dtype=np.float32)
 
-            counter = 0
-            for pos1, vel1,mass1, id1 in tqdm(zip(primary_pos, primary_vel,primary_mass, primary_ID), total = len(primary_pos)):
+        # Save everything in memory to mitigate I/O usage throughout
+        # Change to updating the dsets in the 
+        array_radial = np.zeros(dset_shape_full//20, dtype = np.float32)
+        array_velocities = np.zeros(dset_shape_full//20, dtype = np.float32)
+        array_prim_masses = np.zeros(dset_shape_full//20, dtype = np.float32)
+        array_sec_masses = np.zeros(dset_shape_full//20, dtype = np.float32)
 
-                self_compare_mask = secondary_ID != id1 # Exclude self-comparison
+        counter = 0
+        for pos1, vel1,mass1, id1 in tqdm(zip(primary_pos, primary_vel,primary_mass, primary_ID), total = len(primary_pos)):
+            self_compare_mask = secondary_ID != id1 # Exclude self-comparison
 
-                # Positional differences with periodic boundary conditions, without self-comparison
-                pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_boxsize) % self.boxsize - self.half_boxsize
-                radial_distances = np.linalg.norm(pos_diffs, axis=1) 
+            # Positional differences with periodic boundary conditions, without self-comparison
+            pos_diffs = (secondary_pos[self_compare_mask] - pos1 + self.half_boxsize) % self.boxsize - self.half_boxsize
+            radial_distances = np.linalg.norm(pos_diffs, axis=1) 
 
-                #SUBSAMPLING!
-                #TODO: make rmin (and rmax?) parameters that can be controlled in this functionality.
-                radial_distances, selected_indx = rejection_sample(radial_distances, dropoff = power_dropoff, rmin = 20.13, rmax = 300) 
+            #SUBSAMPLING!
+            #TODO: make rmin (and rmax?) parameters that can be controlled in this functionality.
+            radial_distances, selected_indx = rejection_sample(radial_distances, dropoff = power_dropoff, rmin = 20.13, rmax = 300) 
 
-                pos_diffs = pos_diffs[selected_indx]
-                number_of_comparisons = selected_indx.size
+            pos_diffs = pos_diffs[selected_indx]
+            number_of_comparisons = selected_indx.size
 
-                # Project to line connecting the haloes
-                radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis]
+            # Project to line connecting the haloes
+            radial_unit_vectors = pos_diffs / radial_distances[:, np.newaxis]
 
-                # Project velocities to the connecting line between haloes, use all relevant selections
-                vel_diffs = secondary_vel[self_compare_mask][selected_indx] - vel1
-                projected_vels = np.einsum('ij,ij->i', vel_diffs, radial_unit_vectors)
+            # Project velocities to the connecting line between haloes, use all relevant selections
+            vel_diffs = secondary_vel[self_compare_mask][selected_indx] - vel1
+            projected_vels = np.einsum('ij,ij->i', vel_diffs, radial_unit_vectors)
 
-                dset_radial[counter:counter+number_of_comparisons] = radial_distances
-                dset_velocities[counter:counter+number_of_comparisons] = projected_vels
-                dset_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask][selected_indx]
-                dset_prim_masses[counter:counter+number_of_comparisons] = np.full(number_of_comparisons, mass1) #fill with the same value to keep the same dset shape
+            array_radial[counter:counter+number_of_comparisons] = radial_distances
+            array_velocities[counter:counter+number_of_comparisons] = projected_vels
+            array_sec_masses[counter:counter+number_of_comparisons] = secondary_mass[self_compare_mask][selected_indx]
+            array_prim_masses[counter:counter+number_of_comparisons] = np.full(number_of_comparisons, mass1) #fill with the same value to keep the same dset shape
 
-                counter += number_of_comparisons
-            
-            # make sure we don't save meaningless zeroes at the end
-            dset_radial.resize((counter,))
-            dset_velocities.resize((counter,))
-            dset_sec_masses.resize((counter,))
-            dset_prim_masses.resize((counter,))
+            counter += number_of_comparisons
+
+        # make sure we don't save meaningless zeroes at the end
+        nonzero_idx = np.nonzero(array_radial) #holds across all arrays so we need only calculate it once
+        array_radial = array_radial[nonzero_idx]
+        array_velocities = array_velocities[nonzero_idx]
+        array_sec_masses = array_sec_masses[nonzero_idx]
+        array_prim_masses = array_prim_masses[nonzero_idx]
+
+        # This is the only
+        with h5py.File(self.filename, "w") as f:
+            _ = f.create_dataset("radial_distances", data = array_radial, dtype=np.float32)
+            _ = f.create_dataset("velocity_differences", data = array_velocities, dtype=np.float32)
+            _ = f.create_dataset("secondary_masses", data = array_sec_masses, dtype=np.float32)
+            _ = f.create_dataset("primary_masses", data = array_prim_masses, dtype=np.float32)
 
 
     def plot_velocity_histograms(self, savefig = True, showfig = False):
