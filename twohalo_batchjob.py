@@ -22,7 +22,6 @@ mass_range = np.arange(args.lower_mass, args.upper_mass, args.step).astype(np.fl
 mass_bins = np.array([[mass_range[i],mass_range[i+1]] for i in range(len(mass_range)-1)])
 bin_combis = np.array(list(combinations_with_replacement(mass_bins,2)))
 
-#TODO rename existing data folder
 BASEPATH = '/disks/cosmodm/vdvuurst'
 data_dir = os.path.join(BASEPATH,f'data/M1{args.lower_mass}-1{args.upper_mass-args.step}_{args.step}dex')
 if not os.path.isdir(data_dir):
@@ -31,6 +30,7 @@ if not os.path.isdir(data_dir):
 # initializing the class reads in the SOAP file, we only need to do this once
 # but just set the filename to which we save to a different value every time
 twohalo = TWOHALO(PATH = args.path_to_soap, filename = None)
+# format_plot()
 
 for bin_prim, bin_sec in reversed(bin_combis): # Start from the high mass bins, these are much less of these pairs
 
@@ -53,7 +53,6 @@ for bin_prim, bin_sec in reversed(bin_combis): # Start from the high mass bins, 
         else:  # no subsampling needed in the other cases
             twohalo.create_full_catalogue(mass_range_primary = bin_prim, mass_range_secondary = bin_sec)
 
-    format_plot()
     # twohalo.plot_velocity_histograms()
     # twohalo.plot_moments()
 

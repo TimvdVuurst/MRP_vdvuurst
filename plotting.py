@@ -41,7 +41,7 @@ def format_plot():
     mpl.rcParams['xtick.minor.width'] = 1
     mpl.rcParams['ytick.minor.width'] = 1
 
-class Plotter:
+class TwoHaloPlotter:
     def __init__(self, path: str):
         with h5py.File(path,'r') as file:
             self.radial_distances = file['radial_distances'][:]
@@ -101,21 +101,38 @@ class Plotter:
         
         plt.close()
 
-    def plot_moments(self, max_radius = 300, number_of_bins = 20, savefig = True, showfig = False):
+    @staticmethod
+    #from:   TODO: VERIFY!!!!
+    def SES(n):
+        return np.sqrt(6*n *(n-1) / ((n-2)*(n+1)*(n+3)))
+    
+    @staticmethod
+    #From: https://methods.sagepub.com/dict/edvol/the-sage-dictionary-of-statistics/chpt/standard-error-kurtosis TODO: VERIFY!!!
+    def SEK(n, SES):
+        if callable(SES):
+            return np.sqrt((SES(n) * 4* (n**2 -1)) / ((n-3) * (n+5)))
+        else:
+            return np.sqrt((SES * 4* (n**2 -1)) / ((n-3) * (n+5)))
+
+
+    def plot_moments(self, max_radius = 300, number_of_bins = 20, savefig = True, showfig = False, filename = None):
         self.radial_bins = np.logspace(0, np.log10(max_radius), number_of_bins)
 
         bin_indices = np.digitize(self.radial_distances, bins = self.radial_bins) - 1
         num_bins = len(self.radial_bins) - 1  
 
         self.mean, self.dispersion, self.skews, self.kurt = np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins), np.zeros(num_bins)
+        self.skew_error = np.zeros(num_bins)
+        self.kurt_error = np.zeros(num_bins)
         
         fig,axes = plt.subplots(nrows = 4,figsize=(8,12), sharex=True)
 
         for bin_idx in range(num_bins):
             bin_mask = bin_indices == bin_idx
             bin_velocities = self.velocities[bin_mask]
-
-            if len(bin_velocities) == 0:
+            N = bin_velocities.size
+            # print(f'LOOK HERE!!!! {N}')
+            if N == 0:
                 continue
 
             self.mean[bin_idx] = np.mean(bin_velocities)
@@ -123,13 +140,25 @@ class Plotter:
             self.skews[bin_idx] = skew(bin_velocities, bias = False)
             self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False, bias = False)
 
-        axes[0].plot(self.radial_bins[:-1], self.mean, marker='s')
+            # Standard error for skewness and kurtosis
+            if N > 3:
+                self.skew_error[bin_idx] = self.SES(N)
+                self.kurt_error[bin_idx] = self.SEK(N, self.skew_error[bin_idx])
+
+        axes[0].plot(self.radial_bins[:-1], self.mean, marker='s', c = 'black')
         axes[0].set(ylabel = r'Mean $\mu$')
-        axes[1].plot(self.radial_bins[:-1], self.dispersion, marker = 's')
+
+        axes[1].plot(self.radial_bins[:-1], self.dispersion, marker = 's', c = 'forestgreen')
         axes[1].set(ylabel = r'Dispersion $\sigma$')
-        axes[2].plot(self.radial_bins[:-1], self.skews, marker = 's')
+
+        axes[2].plot(self.radial_bins[:-1], self.skews, marker = 's', c= 'red')
+        nonzero_error = np.nonzero(self.skew_error)
+        axes[2].errorbar(self.radial_bins[:-1][nonzero_error], self.skews[nonzero_error], yerr = self.skew_error[nonzero_error], fmt =',', capsize=3, color = 'red')
         axes[2].set(ylabel = r'Skewness $s$')
-        axes[3].plot(self.radial_bins[:-1], self.kurt, marker='s')
+
+        axes[3].plot(self.radial_bins[:-1], self.kurt, marker='s', c = 'blue')
+        nonzero_error = np.nonzero(self.kurt_error)
+        axes[3].errorbar(self.radial_bins[:-1][nonzero_error], self.kurt[nonzero_error], yerr = self.kurt_error[nonzero_error], fmt =',', capsize=3, color = 'blue')
         axes[3].set(xlabel = r'radial distance $r$', ylabel = r'Kurtosis $k$')
 
         for ax in axes:
@@ -137,9 +166,10 @@ class Plotter:
 
         plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
         if savefig:
-            if self.is_subsample:
-                filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_subsample_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
-            else:
+            # if self.is_subsample:
+            #     filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_subsample_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+            # else:
+            if filename is None:
                 filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             plt.savefig(filename, dpi = 200, bbox_inches = 'tight')
         if showfig:
@@ -148,12 +178,19 @@ class Plotter:
         plt.close()
 
 
+
+
+def plot_onehalo_hist(data, number_of_bins = 20, savefig = True, showfig = False, filename = None):
+    fig,ax = plt.subplots(figsize = (8,12))
+    pass
+
+
 if __name__ == '__main__':
     dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
     
     format_plot() #make plots pretty
 
-    for file in tqdm(sorted(os.listdir(dir))[1:]):
+    for file in tqdm(reversed(sorted(os.listdir(dir)))): #high mass bins first since they're quick
         datapath = os.path.join(dir,file)
 
         
@@ -161,11 +198,12 @@ if __name__ == '__main__':
         mass_range_primary = np.array(info[-3].split('-')).astype(np.float32)
         mass_range_secondary = np.array(info[-1].split('.hdf5')[0].split('-')).astype(np.float32)
         # plotname =  f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
-        plotname =  f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
+        plotname =  f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
         
         if os.path.isfile(plotname): #no overwriting
             continue
 
-        plotter = Plotter(datapath)
+        plotter = TwoHaloPlotter(datapath)
         # plotter.plot_velocity_histograms()
-        plotter.plot_moments()
+        plotter.plot_moments(filename = plotname)
+        

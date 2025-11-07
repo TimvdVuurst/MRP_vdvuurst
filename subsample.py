@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import h5py 
-from plotting import Plotter
 from tqdm import tqdm
 
 
