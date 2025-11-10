@@ -75,3 +75,14 @@ class ONEHALO:
         with h5py.File(self.filename, 'w') as file:
             file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
             file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+
+class ONEHALO_fitter:
+    def __init__(self, PATH: str, massbin: Tuple[np.float32, np.float32]):
+        self.PATH = PATH
+        self.lower_mass, self.upper_mass = massbin
+
+        with h5py.File(self.PATH, 'r') as handle:
+            self.rel_pos = handle['rel_pos'][:]
+            self.rel_vels = handle['rel_vels'][:]
+        
+        
