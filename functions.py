@@ -20,7 +20,7 @@ def Romberg(a,b,func,m=6):
     for i in range(1,m+1): #loop over rows
         h *= 0.5
         x = a + h #point to evaluate the function at, a little ahead of the previous
-        for k in range(Np):
+        for _ in range(Np):
             r[i] += func(x)
             x += 2*h
     
