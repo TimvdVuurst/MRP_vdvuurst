@@ -361,24 +361,51 @@ class ONEHALO_fitter:
 
 if __name__ == '__main__':
 
-    # path = r'/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex/M_13.5-14.0.hdf5'
-    # fitter = ONEHALO_fitter(PATH = path)
+    path = r'/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex/M_13.5-14.0.hdf5'
     # fitter.initial_params = [412.6, 72.8, 0.21] #should work as a kickstart
     # fitter.fit_to_radial_bins(rbin = [0.2,0.23],verbose=True, plot_func= fitter.plot_distribution_gaussian_mod, dist_func = fitter.mod_gaussian)
 
     format_plot()
 
-    dir = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex'
-    for file in os.listdir(dir): 
-        filehead = file.split('.hdf5')[0]
+    param_fits_dir = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/emcee'
+    savepath = '/disks/cosmodm/vdvuurst/figures/emcee_results'
+    for param_file in tqdm(os.listdir(param_fits_dir)):
+        param_path = os.path.join(param_fits_dir, param_file)
+        param_tail = param_file.split('.json')[0]
 
-        if os.path.isfile(f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{filehead}.json'):
-            initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{filehead}.json'
-        else:
-            initial_param_file = None
+        path = f'/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex/{param_tail}.hdf5'
+        fitter = ONEHALO_fitter(PATH = path, initial_param_file = None)
+
+        #  plot_func(dist_func, result.x, data, bins=bins, distname=distname, filename = filename)
+        with open(param_path, 'r') as f:
+            param_dict = load(f)
+
+        # param_vals = np.array(param_dict[('sigma_1','sigma_2','lambda')])
+        param_vals = np.array([param_dict[x] for x in ['sigma_1','sigma_2','lambda']])
+
+        ONEHALO_fitter.plot_distribution_gaussian_mod(ONEHALO_fitter.mod_gaussian, param_vals, fitter.rel_vels,
+                                                       bins = 70, distname = 'Modified Gaussian',
+                                                        filename = os.path.join(savepath, f'{param_tail}_fit.png'))
+
+
+
+
+
+
+
+
+
+    # dir = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex'
+    # for file in os.listdir(dir): 
+    #     filehead = file.split('.hdf5')[0]
+
+    #     if os.path.isfile(f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{filehead}.json'):
+    #         initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{filehead}.json'
+    #     else:
+    #         initial_param_file = None
         
-        path = os.path.join(dir, file)
-        fitter = ONEHALO_fitter(PATH = path, initial_param_file = initial_param_file, joint = False) #joint set to false for now since we haven't generalized to that yet
-        fitter.initial_params = [412.6, 72.8, 0.21] #should work
-        # fitter.fit_to_data(save_params = True)
-        fitter.fit_to_data(verbose = True, plot_func= fitter.plot_distribution_gaussian_mod, dist_func = fitter.mod_gaussian)
+    #     path = os.path.join(dir, file)
+    #     fitter = ONEHALO_fitter(PATH = path, initial_param_file = initial_param_file, joint = False) #joint set to false for now since we haven't generalized to that yet
+    #     fitter.initial_params = [412.6, 72.8, 0.21] #should work
+    #     # fitter.fit_to_data(save_params = True)
+    #     fitter.fit_to_data(verbose = True, plot_func= fitter.plot_distribution_gaussian_mod, dist_func = fitter.mod_gaussian)

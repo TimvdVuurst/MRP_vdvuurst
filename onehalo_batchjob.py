@@ -52,5 +52,6 @@ for mass_bin in reversed(mass_bins): # High mass bins first, since these have th
 
     fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
     res,err = fitter.fit_to_data(method='emcee', verbose = True, nwalkers = 32, nsteps = 5000, save_params = True)
+    print()
 
 
