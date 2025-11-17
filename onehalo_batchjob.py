@@ -23,7 +23,7 @@ data_dir = os.path.join(BASEPATH,f'data/OneHalo_{args.step}dex')
 if not os.path.isdir(data_dir):
     os.mkdir(data_dir)
 
-onehalo = ONEHALO(PATH = args.path_to_soap) #change filename in loop structure
+# onehalo = ONEHALO(PATH = args.path_to_soap) #change filename in loop structure
 overwrite = bool(args.overwrite)
 
 #TODO uncomment, maybe make an argument that can control whether we even catalogue at all? just to save the overhead
@@ -50,8 +50,9 @@ for mass_bin in reversed(mass_bins): # High mass bins first, since these have th
 
     filehead = filename.split('.hdf5')[0]
 
-    fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
-    res,err = fitter.fit_to_data(method='emcee', verbose = True, nwalkers = 32, nsteps = 5000, save_params = True)
+    fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize_binned/{filehead}.json', joint = False)
+    res,err = fitter.fit_to_data(method='emcee', verbose = True, nwalkers = 32, nsteps = 5000, save_params = True, plot_func = True)
+    # res = fitter.fit_to_data(method='minimize', plot_func = fitter.plot_distribution_gaussian_mod, dist_func = fitter.mod_gaussian, verbose = False, save_params = True)
     print()
 
 

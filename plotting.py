@@ -102,17 +102,14 @@ class TwoHaloPlotter:
         plt.close()
 
     @staticmethod
-    #from:   TODO: VERIFY!!!!
+    #from: https://en.wikipedia.org/wiki/Skewness#Sample_skewness
     def SES(n):
         return np.sqrt(6*n *(n-1) / ((n-2)*(n+1)*(n+3)))
     
     @staticmethod
-    #From: https://methods.sagepub.com/dict/edvol/the-sage-dictionary-of-statistics/chpt/standard-error-kurtosis TODO: VERIFY!!!
+    #From: https://en.wikipedia.org/wiki/Kurtosis
     def SEK(n, SES):
-        if callable(SES):
-            return np.sqrt((SES(n) * 4* (n**2 -1)) / ((n-3) * (n+5)))
-        else:
-            return np.sqrt((SES * 4* (n**2 -1)) / ((n-3) * (n+5)))
+        return np.sqrt(24*n*np.square(n-1) / ((n-3) * (n-2) * (n+3) * (n+5)))
 
 
     def plot_moments(self, max_radius = 300, number_of_bins = 20, savefig = True, showfig = False, filename = None):
@@ -141,7 +138,7 @@ class TwoHaloPlotter:
             self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False, bias = False)
 
             # Standard error for skewness and kurtosis
-            if N > 3:
+            if N >= 4:
                 self.skew_error[bin_idx] = self.SES(N)
                 self.kurt_error[bin_idx] = self.SEK(N, self.skew_error[bin_idx])
 
@@ -200,8 +197,8 @@ if __name__ == '__main__':
         # plotname =  f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
         plotname =  f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
         
-        if os.path.isfile(plotname): #no overwriting
-            continue
+        # if os.path.isfile(plotname): #no overwriting
+        #     continue
 
         plotter = TwoHaloPlotter(datapath)
         # plotter.plot_velocity_histograms()
