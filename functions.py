@@ -36,3 +36,10 @@ def Romberg(a,b,func,m=6):
 
 
     return r[0],np.abs(r[0] - r[1])
+
+
+def modified_logspace(start, stop, num, base = 10, **kwargs):
+    logspace = np.zeros(num) 
+    y = np.power(base, np.linspace(start, stop, num, **kwargs))
+    logspace[1:] = y[1:]
+    return logspace

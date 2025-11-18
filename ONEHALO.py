@@ -1,19 +1,18 @@
 import numpy as np
 import h5py
 from typing import Tuple
-import argparse
 from tqdm import tqdm
 from plotting import format_plot
 import matplotlib.pyplot as plt
-from scipy.optimize import root, minimize
+from scipy.optimize import minimize
 import os
-from scipy.integrate import quad
-from functions import Romberg
+from functions import Romberg, modified_logspace
 from TWOHALO import _make_nbound_mask
 from json import load, dump
 
 import emcee
 from corner import corner
+
 
 class ONEHALO:
     def __init__(self, PATH: str):
@@ -109,23 +108,39 @@ class ONEHALO_fitter:
 
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
-            self.rel_vels = handle['rel_vels'][:]
+            self.rel_vels = handle['rel_vels'][:].flatten()
         
         self.rel_sq_dist = np.square(self.rel_pos).sum(axis = 1)
+        self.rel_vel_sq = np.square(self.rel_vels) * -0.5
 
     @staticmethod
-    def mod_gaussian(x,sigma1,sigma2,lambda_):
-        return ((1-lambda_)* (np.exp(-(x)**2 / (2 * sigma1**2)) /sigma1 ) + \
-                lambda_*np.exp(-((x)**2/(2*sigma2**2)))/sigma2)/ (np.sqrt(2*np.pi))
-   
+    def mod_gaussian(x_sq,sigma1,sigma2,lambda_):
+        inv_sigma1 = 1 / sigma1
+        inv_sigma2 = 1 / sigma2
+        # return ( ((1-lambda_) * (np.exp(inv_sigma1**2 * x_sq) * inv_sigma1 ) + \
+        #         lambda_*np.exp(inv_sigma2**2 * x_sq) * inv_sigma2) / (np.sqrt(2*np.pi)))
+
+        return -0.5* np.log(2*np.pi) + np.log((1-lambda_) * inv_sigma1) + (x_sq * inv_sigma1**2) + \
+                    np.log(1 + sigma1 * inv_sigma2 * lambda_ / (1 - lambda_) * np.exp(x_sq * (-inv_sigma1**2 + inv_sigma2**2)))
+
+
+    @staticmethod
+    def mod_gaussian_test(x_sq,sigma1,sigma2,lambda_):
+        inv_sigma1 = 1 / sigma1
+        inv_sigma2 = 1 / sigma2
+        return ( ((1-lambda_) * (np.exp(inv_sigma1**2 * x_sq) * inv_sigma1 ) + \
+                lambda_*np.exp(inv_sigma2**2 * x_sq) * inv_sigma2) / (np.sqrt(2*np.pi)))
+    
+    @staticmethod
+    def mod_gaussian_reg(x, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
+        return ((1 - lambda_) * np.exp(-(x)**2 / (2 * sigma1**2))/ sigma1 + lambda_ * np.exp(-(x)**2/ (2*sigma2**2))/sigma2) / (np.sqrt(2*np.pi))
+
+
     def mod_gaussian_integral(self,sigma1,sigma2,lambda_,x_i,x_f):
-        # integral,_= quad(lambda x: self.mod_gaussian(x,sigma1,sigma2,lambda_), x_i, x_f)
-        integral, err = Romberg(x_i, x_f, lambda x: self.mod_gaussian(x,sigma1,sigma2,lambda_))
+        integral, err = Romberg(x_i, x_f, lambda x: self.mod_gaussian_reg(x,sigma1,sigma2,lambda_)) #cannot use self.mod_gauss since we need input in terms of regular x
         return integral
         
-    # def mod_gaussian_log_likelihood_binned(self, params, bin_edges, bin_heights):
-  
-    
+
     @staticmethod
     def log_prior(theta):
         sigma_1, sigma_2, lambda_ = theta
@@ -162,11 +177,11 @@ class ONEHALO_fitter:
 
         sigma1, sigma2, lambda_ = params
         mu_i = self.mod_gaussian(data, sigma1, sigma2, lambda_)
-        mu_i[mu_i <= 0] = 0 # penalize negative or 0 values
+        mu_i[mu_i < 0] = 0 # penalize negative or 0 values
         return np.sum(np.log(mu_i)) + 1. #+1. for integral
         
     @staticmethod
-    def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func,
+    def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = True,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
                                      plot = True, verbose = False, filename = 'Mfit', save_params = False):
         
@@ -175,15 +190,24 @@ class ONEHALO_fitter:
         ndim = init_guess.shape[0]
         pos = init_guess + 1e-4 * np.random.randn(nwalkers, ndim)
 
-        try:
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data,))
+        if not use_binned:
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data,), moves = emcee.moves.GaussianMove(0.05))
+                                            #  moves=[(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)])
+            sampler.run_mcmc(pos, nsteps, progress = verbose)
 
-        except TypeError: #too little args; binned likelihood
+        else:
             # Compute histogram
             bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (bin_edges, bin_heights))
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (bin_edges, bin_heights), moves = emcee.moves.GaussianMove(0.05))
+                                            # moves=[(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)])
+            
+            sampler.run_mcmc(pos, nsteps, progress = verbose)
 
-        sampler.run_mcmc(pos, nsteps, progress = verbose)
+        # if verbose:
+        #     print(
+        #         "Autocorrelation time: {0:.2f} steps".format(
+        #             sampler.get_autocorr_time()[0]
+        #         ))
 
         if plot:
             # chain plots
@@ -270,9 +294,8 @@ class ONEHALO_fitter:
         return neg_log_L
     
 
-    @staticmethod
-    def _fit_modified_gaussian_minimize(data, bins, initial_guess,bounds, neg_log_likelihood_func,
-                              plot_func = None, dist_func = None, distname = 'Modified Gaussian', binno = 1,
+    def _fit_modified_gaussian_minimize(self, data, bins, initial_guess,bounds, neg_log_likelihood_func,
+                              plot: bool = False, distname = 'Modified Gaussian', binned = True,
                               verbose = False, filename = 'Mfit', save_params = False):
         """
         Fits a modified Gaussian distribution using minimize (scipy.optimize) to binned data and plots the result.
@@ -292,11 +315,12 @@ class ONEHALO_fitter:
         result : The optimization result object from minimize.
         """
         # Compute histogram
-        bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
 
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) #param_names not to be confused with param_labels
 
-        try:
+        if binned:
+            bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
+
             # Optimize
             result = minimize(
                 neg_log_likelihood_func,
@@ -305,7 +329,7 @@ class ONEHALO_fitter:
                 bounds=bounds
             )
 
-        except TypeError: #non-binned likelihood takes less args
+        else: #non-binned likelihood takes less args
             result = minimize(
                 neg_log_likelihood_func,
                 init_guess,
@@ -331,85 +355,198 @@ class ONEHALO_fitter:
         
 
         # Plot if function provided
-        if plot_func and dist_func:
-            plot_func(dist_func, result.x, data, bins=bins, distname=distname, filename = filename)
+        if plot:
+            plot_distribution_gaussian_mod(self.mod_gaussian, result.x, data, bins=bins, distname=distname, filename = filename)
 
         return result
     
     # Standard values taken from Sowmya's code
-    def fit_to_data(self, method: str = 'emcee', bins = 70,
-                     bounds = [(0.01, None), (0.0001, None), (-0.09, 1)], plot_func = None, dist_func = None,
-                     nwalkers = 32, nsteps = 5000,
-                     distname = 'Modified Gaussian', binno = 1, verbose = False, save_params = False):
+    def fit_to_data(self, method: str, bins: int = 200, bounds: list = [(0.01, None), (0.0001, None), (-0.09, 1)],
+                     plot: bool = True, nwalkers: int = 8, nsteps: int = 500, non_bin_threshold: int = 1000,
+                     distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False):
         
         method = method.lower()
-        if method not in ['emcee','emcee_binned','minimize', 'minimize_binned']:
-            raise ValueError(f'Method name "{method}" not recognized. Specify either "emcee", "emcee_binned", "minimize" or "minimize_binned".')
+        allowed = ['emcee','minimize']
+        if method not in allowed:
+            raise ValueError(f'Method name "{method}" not recognized. Choose from {*allowed,}.')
         
-        if method == 'minimize_binned':
-            filename = f'/disks/cosmodm/vdvuurst/figures/minimize_fits_binned/M_{self.lower_mass}-{self.upper_mass}_fit.png'
+        use_binned = self.rel_vels.size > non_bin_threshold # if there's too many velocities, using the unbinned likelihood is much too slow
+    
+        filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results/M_{self.lower_mass}-{self.upper_mass}_fit.png'
 
-            return self._fit_modified_gaussian_minimize(self.rel_vels, bins, self.initial_param_dict, bounds, self.mod_gaussian_neg_log_likelihood_binned,
-                                            plot_func, dist_func, distname, binno, verbose, filename, save_params)
+        if method == 'minimize':
+            if use_binned:
+                return self._fit_modified_gaussian_minimize(data = self.rel_vels, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
+                                                            neg_log_likelihood_func = self.mod_gaussian_neg_log_likelihood_binned, plot = plot, distname = distname, binned = True, verbose = verbose, filename = filename,
+                                                              save_params = save_params)
     
-        elif method == 'minimize':
-            filename = f'/disks/cosmodm/vdvuurst/figures/minimize_fits/M_{self.lower_mass}-{self.upper_mass}_fit.png'
+            #NOTE the self.rel_vel_sq - this is pre-calculated in __init__ to save a little time but needs to be passed here
+            # since unbinned method uses a lot of calls on the model
+            return self._fit_modified_gaussian_minimize(data = self.rel_vels, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
+                                                            neg_log_likelihood_func = self.mod_gaussian_neg_log_likelihood_binned, plot = plot,
+                                                            distname = distname, binned = False, verbose = verbose, filename = filename,
+                                                            save_params = save_params)
+    
 
-            return self._fit_modified_gaussian_minimize(self.rel_vels, bins, self.initial_param_dict, bounds, self.mod_gaussian_neg_log_likelihood,
-                                            plot_func, dist_func, distname, binno, verbose, filename, save_params)
-    
-        elif method == 'emcee':
-            filename = f'/disks/cosmodm/vdvuurst/figures/emcee_results/M_{self.lower_mass}-{self.upper_mass}'
-            return self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood,
-                                                     nwalkers = nwalkers, nsteps = nsteps,
-                                                     verbose = verbose, save_params = save_params, plot = plot_func, filename = filename) #TODO:change plot to a variable
-        else: #emcee_binned
-            filename = f'/disks/cosmodm/vdvuurst/figures/emcee_results_binned/M_{self.lower_mass}-{self.upper_mass}'
-            return self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood_binned,
-                                                     nwalkers = nwalkers, nsteps = nsteps,
-                                                     verbose = verbose, save_params = save_params, plot = True, filename = filename) #TODO:change plot to a variable
-    
-    def fit_to_radial_bins(self, rbin = None, bins = 70, bounds = [(0.01, None), (0.0001, None), (-0.09, 1)],
-                            plot_func = None, dist_func = None,distname = 'Modified Gaussian', binno = 1, verbose = False):
-        
-        if rbin is None:
-            #TODO: do it for all radial bins, somehow define the radial bins w/o hardcoding (at least motivated unlike Sowmya did)
-            return 
-        
         else:
+            #NOTE the self.rel_vel_sq - this is pre-calculated in __init__ to save massive time but needs to be passed here
+            # since unbinned method uses a lot of calls on the model
+
+            if use_binned: 
+                return self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood_binned,
+                                                     nwalkers = nwalkers, nsteps = nsteps,
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename)
+
+            return self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood,
+                                                     nwalkers = nwalkers, nsteps = nsteps,
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename) 
+
+    
+    def fit_to_radial_bins(self, method:str, rbins = None, r_start: float = 0, r_stop:float = 5, r_steps: int = 18, 
+                            bins: int = 200, bounds: list = [(0.01, None), (0.0001, None), (-0.09, 1)], plot: bool = True,
+                            nwalkers: int = 8, nsteps: int = 500, non_bin_threshold: int = 1000,
+                            distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False):
+        """_summary_
+
+        Args:
+            method (str): _description_
+            rbins (Tuple or array_like of tuples, optional): either a 2-tuple or a list of 2-tuples specifiying the bin_edges. 
+                                                             If None, r_start, r_stop and r_step will be used to log-space the bins. Defaults to None.
+            r_start (float, optional): _description_. Defaults to 0.
+            r_stop (float, optional): _description_. Defaults to 5.
+            r_steps (int, optional): _description_. Defaults to 18.
+            bins (int, optional): _description_. Defaults to 200.
+            bounds (list, optional): _description_. Defaults to [(0.01, None), (0.0001, None), (-0.09, 1)].
+            plot (bool, optional): _description_. Defaults to True.
+            nwalkers (int, optional): _description_. Defaults to 8.
+            nsteps (int, optional): _description_. Defaults to 500.
+            non_bin_threshold (int, optional): _description_. Defaults to 1000.
+            distname (str, optional): _description_. Defaults to 'Modified Gaussian'.
+            verbose (bool, optional): _description_. Defaults to False.
+            save_params (bool, optional): _description_. Defaults to False.
+
+        Raises:
+            ValueError: _description_
+
+        Returns:
+            _type_: _description_
+        """
+        
+        method = method.lower()
+        allowed = ['emcee','minimize']
+        if method not in allowed:
+            raise ValueError(f'Method name "{method}" not recognized. Choose from {*allowed,}.')
+        
+        if rbins:
+            if len(rbin) > 2:
+                results = np.zeros((len(rbins), 3))
+                errors = np.zeros_like(results)
+                for rbin in rbins:
+                    radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
+                    masked_data = self.rel_vels[radial_mask]
+                    use_binned = masked_data.size < non_bin_threshold
+                
+                    filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}_r_{rbin[0]}-{rbin[1]}_fit.png'
+                
+                    if method == 'emcee':
+                        likelihood_func = self.mod_gaussian_log_likelihood_binned if use_binned else self.mod_gaussian_log_likelihood
+                        result, err = self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood,
+                                                            nwalkers = nwalkers, nsteps = nsteps,
+                                                            verbose = verbose, save_params = save_params, plot = plot, filename = filename)
+                        results[i] = result
+                        errors[i] = err
+
+                    else:
+                        likelihood_func = self.mod_gaussian_neg_log_likelihood_binned if use_binned else self.mod_gaussian_neg_log_likelihood
+                        result = self._fit_modified_gaussian_minimize(data = masked_data, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
+                                                                    neg_log_likelihood_func = likelihood_func, plot = plot,
+                                                                    distname = distname, binned = False, verbose = verbose, filename = filename,
+                                                                    save_params = save_params)
+                        results[i] = result
+
+                return results, errors
+
+            else:
+                radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
+                masked_data = self.rel_vels[radial_mask]
+                use_binned = masked_data.size < non_bin_threshold
+            
+                filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}_r_{rbin[0]}-{rbin[1]}_fit.png'
+            
+                if method == 'emcee':
+                    likelihood_func = self.mod_gaussian_log_likelihood_binned if use_binned else self.mod_gaussian_log_likelihood
+                    result, err = self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood,
+                                                        nwalkers = nwalkers, nsteps = nsteps,
+                                                        verbose = verbose, save_params = save_params, plot = plot, filename = filename)
+
+                    return result, err
+
+                else:
+                    likelihood_func = self.mod_gaussian_neg_log_likelihood_binned if use_binned else self.mod_gaussian_neg_log_likelihood
+                    result = self._fit_modified_gaussian_minimize(data = masked_data, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
+                                                                neg_log_likelihood_func = likelihood_func, plot = plot,
+                                                                distname = distname, binned = False, verbose = verbose, filename = filename,
+                                                                save_params = save_params)
+                    return result, np.zeros_like(result)
+        
+        # if an rbin is not specified, we log-space the bins in the function
+
+        rbins = modified_logspace(r_start, r_stop, r_steps) 
+        results = np.zeros((r_steps - 1, 3))
+        errors = np.zeros((r_steps - 1 ,3))
+        for i in range(r_steps - 1):
+            rbin = (rbins[i], rbins[i+1])
             radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
             masked_data = self.rel_vels[radial_mask]
-            filename = f'/disks/cosmodm/vdvuurst/figures/M_{self.lower_mass}-{self.upper_mass}_r_{rbin[0]}-{rbin[1]}_fit.png'
-            return self._fit_modified_gaussian_minimize(masked_data, bins, self.initial_param_dict, bounds, 
-                                    self.mod_gaussian_neg_log_likelihood_binned,
-                                    plot_func, dist_func, distname, binno, verbose, filename)
-
-    #TODO: make this prettier
-    @staticmethod
-    def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit'):
+            use_binned = masked_data.size < non_bin_threshold
         
-        bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        bin_width= bin_edges[1] - bin_edges[0] 
-        bin_widths = np.diff(bin_edges)  # The width of each bin
-        number_density = bin_heights / bin_widths  # Normalize by bin width
-        # Plot the histogram
-        fig = plt.figure(figsize=(7,7))
-        frame=fig.add_subplot(1,1,1)
-        frame.set_xlabel('Velocity difference v', fontsize=16)
-        frame.set_ylabel('Number of galaxies per v', fontsize=16)
-        frame.bar(bin_centers, number_density, width=bin_width, align='center')
-        DAT=np.linspace(np.min(data),np.max(data),1000)
-        sigma,sigma1,lambda_=params 
-        hist_area=np.sum(bin_heights)
-        fit_integral = 1 #since we're using a normalized function
-        A=hist_area/ fit_integral
-        frame.plot(DAT,A*f(DAT,sigma,sigma1,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
-        # frame.set_yscale("log")
-        frame.legend(fontsize=12.5, loc="upper right")
-        frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
-        fig.savefig(filename, dpi=300)
-        plt.close()
+            filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}_r_{rbin[0]}-{rbin[1]}_fit.png'
+           
+            if method == 'emcee':
+                likelihood_func = self.mod_gaussian_log_likelihood_binned if use_binned else self.mod_gaussian_log_likelihood
+                result, err = self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, self.mod_gaussian_log_likelihood,
+                                                     nwalkers = nwalkers, nsteps = nsteps,
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename)
+                results[i] = result
+                errors[i] = err
+
+            else:
+                likelihood_func = self.mod_gaussian_neg_log_likelihood_binned if use_binned else self.mod_gaussian_neg_log_likelihood
+                result = self._fit_modified_gaussian_minimize(data = masked_data, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
+                                                            neg_log_likelihood_func = likelihood_func, plot = plot,
+                                                            distname = distname, binned = False, verbose = verbose, filename = filename,
+                                                            save_params = save_params)
+                results[i] = result
+
+        return results, errors
+
+
+
+#TODO: make this prettier
+def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit'):
+    
+    bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    bin_width= bin_edges[1] - bin_edges[0] 
+    bin_widths = np.diff(bin_edges)  # The width of each bin
+    number_density = bin_heights / bin_widths  # Normalize by bin width
+    # Plot the histogram
+    fig = plt.figure(figsize=(7,7))
+    frame=fig.add_subplot(1,1,1)
+    frame.set_xlabel('Velocity difference v', fontsize=16)
+    frame.set_ylabel('Number of galaxies per v', fontsize=16)
+    frame.bar(bin_centers, number_density, width=bin_width, align='center')
+    DAT=np.linspace(np.min(data),np.max(data),1000)
+    sigma,sigma1,lambda_=params 
+    hist_area=np.sum(bin_heights)
+    fit_integral = 1 #since we're using a normalized function
+    A=hist_area/ fit_integral
+    frame.plot(DAT,A*f(DAT,sigma,sigma1,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
+    # frame.set_yscale("log")
+    frame.legend(fontsize=12.5, loc="upper right")
+    frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
+    fig.savefig(filename, dpi=300)
+    plt.close()
 
 
 if __name__ == '__main__':
