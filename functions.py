@@ -38,8 +38,15 @@ def Romberg(a,b,func,m=6):
     return r[0],np.abs(r[0] - r[1])
 
 
-def modified_logspace(start, stop, num, base = 10, **kwargs):
-    logspace = np.zeros(num) 
-    y = np.power(base, np.linspace(start, stop, num, **kwargs))
-    logspace[1:] = y[1:]
-    return logspace
+def modified_logspace(start, stop, num, base = 10):
+    res = np.zeros(num)
+    stop = np.log10(stop)
+    if start == 0:
+        start = np.log10(0.1)
+        y = np.power(base, np.linspace(start, stop, num - 1))
+        res[1:] = y
+    else:
+        start = np.log10(start)
+        res = np.power(base, np.linspace(start, stop, num))
+
+    return res
