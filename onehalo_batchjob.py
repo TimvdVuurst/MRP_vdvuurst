@@ -46,6 +46,7 @@ verbose = bool(args.overwrite)
     
 #         onehalo.create_catalogue(massbin = mass_bin, filename = filepath)
 
+format_plot()
 
 match args.method.lower():
     case 'emcee':
@@ -65,6 +66,7 @@ match args.method.lower():
 
     case 'minimize':
         for mass_bin in tqdm(reversed(mass_bins)): # High mass bins first, since these have the least entries
+            if verbose: print()
             filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
             filepath =  os.path.join(data_dir,filename)
             file_exists = os.path.isfile(filename)
