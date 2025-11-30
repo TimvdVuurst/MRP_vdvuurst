@@ -29,7 +29,7 @@ if not os.path.isdir(data_dir):
 
 # onehalo = ONEHALO(PATH = args.path_to_soap) #change filename in loop structure
 overwrite = bool(args.overwrite)
-verbose = bool(args.overwrite)
+verbose = bool(args.verbose)
 
 #TODO uncomment, maybe make an argument that can control whether we even catalogue at all? just to save the overhead
 # for mass_bin in tqdm(reversed(mass_bins)): # High mass bins first, since these have the least entries
@@ -51,11 +51,10 @@ format_plot()
 match args.method.lower():
     case 'emcee':
         for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
+            if verbose: print(f'WORKING ON MASS BIN M_1{mass_bin[0]}-1{mass_bin[1]}')
             filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
             filepath =  os.path.join(data_dir,filename)
             file_exists = os.path.isfile(filename)
-
-            #TODO create similar overwrite structure
 
             filehead = filename.split('.hdf5')[0]
 

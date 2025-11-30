@@ -16,13 +16,9 @@ from corner import corner
 
 class ONEHALO:
     def __init__(self, PATH: str):
-        self.PATH = PATH
+        self.PATH = PATH #SOAP path
 
         with h5py.File(self.PATH, "r") as handle:
-            # NoofBoundParticles = handle["InputHalos/NumberOfBoundParticles"][:]
-            # # prelim_mask = _make_nbound_mask(NoofBoundParticles, 100) 
-            # prelim_mask = np.ones_like(NoofBoundParticles).astype(bool)
-
             self.IsCentral = handle["InputHalos/IsCentral"][:].astype(bool) #set to bool so it can be used as a mask
             self.HaloIndices = np.arange(self.IsCentral.size)
             self.COMvelocity = handle["ExclusiveSphere/100kpc/CentreOfMassVelocity"][:]
@@ -30,9 +26,7 @@ class ONEHALO:
             self.HostHaloIndex = handle["SOAP/HostHaloIndex"][:] # -1 for centrals
             self.COM = handle["ExclusiveSphere/100kpc/CentreOfMass"][:]
             self.SOMass = handle['SO/200_mean/TotalMass'][:]
-            # Full_SOMAss =  handle['SO/200_mean/TotalMass'][:]
-            # FOFMass=handle["InputHalos/FOF/Masses"][:]
-
+            self.Rvir = handle['SO/200_mean/SORadius'][:]
             self.boxsize = handle['Header'].attrs['BoxSize'][0]
 
         self.half_boxsize = self.boxsize / 2
@@ -56,12 +50,16 @@ class ONEHALO:
         # Select the relevant mass range, since the lowest is 10**12 Msol and particle mass is 10^9 
         # we do not need to explicitly filter for number of particles, it will always be at least 1000
         mass_mask = self._make_mass_mask(self.SOMass, self.lower_mass, self.upper_mass) #functions as a central mask implicitly
-        HostIndices = self.HaloIndices[mass_mask] #if it has non-zero mass it must be a central (?)
-
+        self.mass_mask = mass_mask
+        HostIndices = self.HaloIndices[mass_mask] #if it has non-zero mass it must be a central
+        
         # From the catalogue of sattelite hosting haloes, select only those we know actually HAVE subhaloes and thus are relevant for this dataset
         Relevant_Hosts_mask = np.isin(self.HostHaloIDs,HostIndices)
+        
         subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask]
+        # self.subhalos_per_host = subhalos_per_host
         HostIndices = self.HostHaloIDs[Relevant_Hosts_mask] # This now replaces the previous HostIndices
+        # self.HostIndices = HostIndices
 
         SatteliteMask = np.isin(self.HostHaloIndex, HostIndices) #pick out all the sattelites from relevant hosts
 
@@ -73,13 +71,20 @@ class ONEHALO:
         relative_COMs = SatCOMs - np.repeat(HostCOMs, subhalos_per_host, axis = 0)
         relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
 
-        with h5py.File(self.filename, 'w') as file:
-            file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
-            file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+        return relative_COMs, relative_vels
 
-## GENERAL FUNCTIONS FOR FITTING
-def mod_gaussian(x, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
-    return ((1 - lambda_) * np.exp(-(x)**2 / (2 * sigma1**2))/ sigma1 + lambda_ * np.exp(-(x)**2/ (2*sigma2**2))/sigma2) / (np.sqrt(2*np.pi))
+        # with h5py.File(self.filename, 'w') as file:
+        #     file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
+        #     file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+
+## GENERAL FUNCTIONS 
+
+def mod_gaussian(v, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
+    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
+    norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)* np.sqrt(2 * np.pi))
+    vsq = -1 * np.square(v) * 0.5
+    return norm * ((1-lambda_) * np.exp(vsq / sigma1**2) + lambda_ * np.exp(vsq / sigma2**2))
+
 
 def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
     integral, _ = Romberg(x_i, x_f, lambda x: mod_gaussian(x,sigma1,sigma2,lambda_)) 
@@ -87,7 +92,10 @@ def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
     
 def log_prior(theta):
     sigma_1, sigma_2, lambda_ = theta
-    if 0.01 < sigma_1 and 0.0001 < sigma_2 and -0.09 < lambda_ < 1.0:   # Standard values taken from Sowmya's code
+    #TODO: find out if there exists and x such that sigma_1 < x and sigma_2 >= x always, trying 450 now
+    #enforce sigma_1 > sigma_2 to break degeneracy, keep only if above doesn't work
+    if 450 <= sigma_1 <= 1000 and 50 < sigma_2 <= 450 and 0 <= lambda_ <= 1.0:
+    # if sigma_2 < sigma_1 < 1000 and 50 < sigma_2 < sigma_1 and 0 <= lambda_ <= 1.0:
         return 0.0
     return -np.inf
 
@@ -120,7 +128,7 @@ def mod_gaussian_log_likelihood(params, data): #full with prior
 
     sigma1, sigma2, lambda_ = params
     mu_i = mod_gaussian(data, sigma1, sigma2, lambda_)
-    mu_i[mu_i < 0] = 0 # penalize negative or 0 values
+    mu_i[mu_i < 0] = 0 # penalize negative values
     return np.sum(np.log(mu_i)) + 1. #+1. for integral
 
 def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
@@ -150,10 +158,8 @@ def mod_gaussian_neg_log_likelihood(params, data):
     sigma1, sigma2, lambda_ = params
     fit_integral = 1. #verified
 
-    neg_log_L = -1 * np.sum(np.log(mod_gaussian(data, sigma1, sigma2, lambda_))) + fit_integral
-    
-    return neg_log_L
-
+    return -1 * np.sum(np.log(mod_gaussian(data, sigma1, sigma2, lambda_))) + fit_integral
+     
 
 class ONEHALO_fitter:
     def __init__(self, PATH: str, initial_param_file: str = None, joint: bool = False):
@@ -191,15 +197,7 @@ class ONEHALO_fitter:
         self.rel_sq_dist = np.square(self.rel_pos).sum(axis = 1)
         self.rel_vel_sq = np.square(self.rel_vels) * -0.5
 
-    # @staticmethod
-    # def mod_gaussian_pre_sq(x_sq,sigma1,sigma2,lambda_):
-    #     inv_sigma1 = 1 / sigma1
-    #     inv_sigma2 = 1 / sigma2
 
-    #     return -0.5* np.log(2*np.pi) + np.log((1-lambda_) * inv_sigma1) + (x_sq * inv_sigma1**2) + \
-    #                 np.log(1 + sigma1 * inv_sigma2 * lambda_ / (1 - lambda_) * np.exp(x_sq * (-inv_sigma1**2 + inv_sigma2**2)))
-
-        
     @staticmethod
     def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = True,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
@@ -282,6 +280,11 @@ class ONEHALO_fitter:
             
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1)
+        
+        # Plot if function provided
+        if plot:
+            plot_distribution_gaussian_mod(mod_gaussian, result, data, bins=bins, distname="Modified Gaussian", filename = filename + '_fit.png')
+
 
         return result, errs
 
@@ -347,7 +350,6 @@ class ONEHALO_fitter:
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1) #write to json
         
-
         # Plot if function provided
         if plot:
             plot_distribution_gaussian_mod(mod_gaussian, result.x, data, bins=bins, distname=distname, filename = filename + '_fit.png')
@@ -372,7 +374,7 @@ class ONEHALO_fitter:
             likelihood_func = mod_gaussian_neg_log_likelihood_binned if use_binned else mod_gaussian_neg_log_likelihood
 
             return self._fit_modified_gaussian_minimize(data = self.rel_vels, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
-                                                            neg_log_likelihood_func = likelihood_func, plot = plot, distname = distname, use_binned = use_binned, verbose = verbose, filename = filename,
+                                                            neg_log_likelihood_func = likelihood_func, plot = plot, distname = distname, use_binned = False, verbose = verbose, filename = filename,
                                                               save_params = save_params)
 
         else:
@@ -385,7 +387,7 @@ class ONEHALO_fitter:
                                                      verbose = verbose, save_params = save_params, plot = plot, filename = filename)
     
     def fit_to_radial_bins(self, method:str, rbins = None, r_start: float = 0., r_stop:float = 5., r_steps: int = 18, 
-                            bins: int = 200, bounds: list = [(0.01, None), (0.0001, None), (-0.09, 1)], plot: bool = True,
+                            bins: int = 200, bounds: list = [(50, 1000), (50, 1000), (0, 1)], plot: bool = True,
                             nwalkers: int = 8, nsteps: int = 1000, non_bin_threshold: int = 100000,
                             distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True):
         """_summary_
@@ -419,6 +421,7 @@ class ONEHALO_fitter:
         if method not in allowed:
             raise ValueError(f'Method name "{method}" not recognized. Choose from {*allowed,}.')
         
+        #TODO: update this with below code
         if rbins:
             if len(rbin) > 2:
                 results = np.zeros((len(rbins), 3))
@@ -478,6 +481,12 @@ class ONEHALO_fitter:
         errors = np.zeros((r_steps - 1, 3, 2))
         for i in range(r_steps - 1): 
             rbin = (rbins[i], rbins[i+1])
+
+            filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
+            if os.path.isfile(f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{method}/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}.json') and not overwrite:
+                print(f'M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f} already done, skipping...')
+                continue
+            
             radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
             masked_data = self.rel_vels[radial_mask]
 
@@ -489,12 +498,8 @@ class ONEHALO_fitter:
             if verbose:
                 print(f"Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} contains {masked_data.size} datapoints")
 
-            use_binned = masked_data.size > non_bin_threshold # MASSIVE speedup by setting a threshold like t
-        
-            filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
-            
-            if os.path.isfile(f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{method}/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}.json') and not overwrite:
-                print(f'M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f} already done, skipping...')
+            # use_binned = masked_data.size > non_bin_threshold # MASSIVE speedup by setting a threshold 
+            use_binned = False
            
             if method == 'emcee':
                 likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
@@ -508,7 +513,7 @@ class ONEHALO_fitter:
                 likelihood_func = mod_gaussian_neg_log_likelihood
                 result = self._fit_modified_gaussian_minimize(data = masked_data, bins = bins, initial_guess= self.initial_param_dict, bounds = bounds, 
                                                             neg_log_likelihood_func = likelihood_func, plot = plot,
-                                                            distname = distname, use_binned = False, verbose = verbose, filename = filename,
+                                                            distname = distname, use_binned = use_binned, verbose = verbose, filename = filename,
                                                             save_params = save_params)
                 results[i] = result.x
 
@@ -533,9 +538,7 @@ def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit
     DAT=np.linspace(np.min(data),np.max(data),1000)
     sigma,sigma1,lambda_=params 
     hist_area=np.sum(bin_heights)
-    fit_integral = 1 #since we're using a normalized function
-    A=hist_area/ fit_integral
-    frame.plot(DAT,A*f(DAT,sigma,sigma1,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
+    frame.plot(DAT,hist_area*f(DAT,sigma,sigma1,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
     # frame.set_yscale("log")
     frame.legend(fontsize=12.5, loc="upper right")
     frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
