@@ -94,8 +94,9 @@ def log_prior(theta):
     sigma_1, sigma_2, lambda_ = theta
     #TODO: find out if there exists and x such that sigma_1 < x and sigma_2 >= x always, trying 450 now
     #enforce sigma_1 > sigma_2 to break degeneracy, keep only if above doesn't work
-    if 450 <= sigma_1 <= 1000 and 50 < sigma_2 <= 450 and 0 <= lambda_ <= 1.0:
-    # if sigma_2 < sigma_1 < 1000 and 50 < sigma_2 < sigma_1 and 0 <= lambda_ <= 1.0:
+    # sigma_border = 400.
+    # if sigma_border <= sigma_1 <= 1500 and 50 < sigma_2 < sigma_border and 0 <= lambda_ <= 1.0:
+    if sigma_2 < sigma_1 < 1000 and 50 < sigma_2 < sigma_1 and 0 <= lambda_ <= 1.0:
         return 0.0
     return -np.inf
 
@@ -180,15 +181,23 @@ class ONEHALO_fitter:
             if joint:
                 with open(initial_param_file, 'r') as f:
                     self.initial_param_dict = load(f)[f'M_{self.lower_mass}-{self.upper_mass}']
+                    #TODO: same as below presumably, with removing errors
             else:
                 with open(initial_param_file, 'r') as f:
                     self.initial_param_dict = load(f)
+                #NOTE: some dicts are bigger, we want only the param data, we dont care about error values
+                self.initial_param_dict = {"sigma_1": self.initial_param_dict['sigma_1'],
+                                            "sigma_2": self.initial_param_dict['sigma_2'], 
+                                            #   "lambda":np.random.normal(self.initial_param_dict['lambda'], 0.25)}
+                                            "lambda": 0.5} # start lambda in the middle of its prior space
+
         else:
             # some random stuff in the ballpark of where we want them to kickstart
             if joint:
-                self.initial_param_dict = {"p": -227.7,"n": 0.22,"q": 37.6,"b": 396.4,"m": 7.8,"c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
+                self.initial_param_dict = {"p": -227.7,"n": 0.22,"q": 37.6,"b": 396.4,"m": 7.8,
+                                           "c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
             else:
-                self.initial_param_dict = {'sigma_1':100.0, 'sigma_2': 100.0, 'lambda':0.1} 
+                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 100.0, 'lambda':0.5} 
 
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
@@ -201,12 +210,15 @@ class ONEHALO_fitter:
     @staticmethod
     def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = True,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
-                                     plot = True, verbose = False, filename = 'Mfit', save_params = False):
+                                     plot = True, verbose = False, filename = 'Mfit', save_params = False, prior_func = log_prior):
         
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
         ndim = init_guess.shape[0]
-        pos = init_guess + 1e-4 * np.random.randn(nwalkers, ndim)
+        noise = np.random.randn(nwalkers, ndim)
+        noise[:,-1] *= 1e-4 #smaller for lambda
+        pos = init_guess + noise
+        # prior_check = prior_func(pos)
 
         if not use_binned:
             sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data,))#, moves = emcee.moves.GaussianMove(0.05))
@@ -229,18 +241,25 @@ class ONEHALO_fitter:
 
         if plot:
             # chain plots
-            fig, axes = plt.subplots(3, figsize=(10, 7), sharex=True)
+            fig, axes = plt.subplots(ndim + 1, figsize=(12, 10), sharex=True)
             samples = sampler.get_chain()
+
             for i in range(ndim):
                 ax = axes[i]
-                ax.plot(samples[:, :, i], "k", alpha=0.3)
+                ax.plot(samples[:, :, i], alpha=0.3)
                 ax.set_xlim(0, len(samples))
                 ax.set_ylabel(param_labels[i])
                 ax.yaxis.set_label_coords(-0.1, 0.5)
 
-            axes[-1].set_xlabel("step number")
-            # plt.show()
-            #f'/disks/cosmodm/vdvuurst/figures/emcee_results/{filename}_walkers.png'
+            likelihoods = sampler.get_log_prob(discard = 100)
+
+            axes[-1].plot(likelihoods, alpha = 0.3)
+            axes[-1].set(ylabel = r'Log($\mathcal{L}$)')
+            # axes[-1].yaxis.set_label_coords(-0.15, 0.5)
+            axes[-1].ticklabel_format(useOffset = True)
+
+            
+            axes[-1].set_xlabel("Step number")
 
             plt.savefig(filename + '_walkers.png', dpi = 200)
             plt.close()
@@ -248,7 +267,7 @@ class ONEHALO_fitter:
             #corner plot
             flat_samples = sampler.get_chain(discard=100, thin=15, flat=True) # modify a little but this is probably fine
 
-            fig = corner(flat_samples, labels = param_labels)
+            fig = corner(flat_samples, labels = param_labels, quiet = True)
 
             fig.savefig(filename + "_corner.png", dpi = 200)
             plt.close(fig)
@@ -287,6 +306,7 @@ class ONEHALO_fitter:
 
 
         return result, errs
+        # return samples
 
     @staticmethod
     def _fit_modified_gaussian_minimize(data, bins, initial_guess,bounds, neg_log_likelihood_func,
@@ -359,7 +379,7 @@ class ONEHALO_fitter:
     # Standard values taken from Sowmya's code
     def fit_to_data(self, method: str, bins: int = 200, bounds: list = [(0.01, None), (0.0001, None), (-0.09, 1)],
                      plot: bool = True, nwalkers: int = 8, nsteps: int = 1000, non_bin_threshold: int = 100000,
-                     distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False):
+                     distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, **kwargs):
         
         method = method.lower()
         allowed = ['emcee','minimize']
@@ -388,8 +408,9 @@ class ONEHALO_fitter:
     
     def fit_to_radial_bins(self, method:str, rbins = None, r_start: float = 0., r_stop:float = 5., r_steps: int = 18, 
                             bins: int = 200, bounds: list = [(50, 1000), (50, 1000), (0, 1)], plot: bool = True,
-                            nwalkers: int = 8, nsteps: int = 1000, non_bin_threshold: int = 100000,
-                            distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True):
+                            nwalkers: int = 16, nsteps: int = 1500, non_bin_threshold: int = 100000,
+                            distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True,
+                            return_values = False, **kwargs):
         """_summary_
 
         Args:
@@ -516,8 +537,9 @@ class ONEHALO_fitter:
                                                             distname = distname, use_binned = use_binned, verbose = verbose, filename = filename,
                                                             save_params = save_params)
                 results[i] = result.x
-
-        return results, errors
+        
+        if return_values:
+            return results, errors
 
 
 
