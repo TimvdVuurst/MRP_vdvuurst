@@ -265,9 +265,10 @@ class ONEHALO_fitter:
             plt.close()
 
             #corner plot
-            flat_samples = sampler.get_chain(discard=100, thin=15, flat=True) # modify a little but this is probably fine
+            flat_samples = sampler.get_chain(discard=100, thin=15, flat=True) # this is probably fine
 
-            fig = corner(flat_samples, labels = param_labels, quiet = True)
+            fig = corner(flat_samples, labels = param_labels, quiet = True,
+                            quantiles=[0.16, 0.5, 0.84])
 
             fig.savefig(filename + "_corner.png", dpi = 200)
             plt.close(fig)
