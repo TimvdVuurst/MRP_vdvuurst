@@ -96,7 +96,7 @@ def log_prior(theta):
     #enforce sigma_1 > sigma_2 to break degeneracy, keep only if above doesn't work
     # sigma_border = 400.
     # if sigma_border <= sigma_1 <= 1500 and 50 < sigma_2 < sigma_border and 0 <= lambda_ <= 1.0:
-    if sigma_2 < sigma_1 < 1000 and 50 < sigma_2 < sigma_1 and 0 <= lambda_ <= 1.0:
+    if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
         return 0.0
     return -np.inf
 
@@ -251,7 +251,7 @@ class ONEHALO_fitter:
                 ax.set_ylabel(param_labels[i])
                 ax.yaxis.set_label_coords(-0.1, 0.5)
 
-            likelihoods = sampler.get_log_prob(discard = 100)
+            likelihoods = sampler.get_log_prob()
 
             axes[-1].plot(likelihoods, alpha = 0.3)
             axes[-1].set(ylabel = r'Log($\mathcal{L}$)')
