@@ -26,11 +26,11 @@ parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help
 parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Size of bins in dex. Defaults to 0.5.')
 parser.add_argument('-P', '--path_to_soap', type = str, default = SOAP_PATH_DEFAULT, help = 'Path specifying the SOAP-HBT data to be used. Should point to SOAP hdf5 file. Defaults to L1000N1800 @ z= 0.')
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
-parser.add_argument('-B', '--bins', type = int, default = 100, help = 'Number of velocity bins')
+parser.add_argument('-B', '--bins', type = int, default = 200, help = 'Number of velocity bins')
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
-parser.add_argument('-NS', '--num_steps', type = int, default = 2000, help = 'Number of walker steps passed to emcee.')
+parser.add_argument('-NS', '--num_steps', type = int, default = 1000, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
 
 args = parser.parse_args()
@@ -55,10 +55,8 @@ def _create_iterable_input(**kwargs):
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir,filename)
 
-        filehead = filename.split('.hdf5')[0]
-
-        fitter = ONEHALO_fitter(PATH = filepath,
-                                initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
+            # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
 
         fitters.append(fitter)
 
@@ -77,7 +75,7 @@ if multiprocess:
     #In multiprocess we set verbose to false since it will interfere too much with output
     # all kwargs given here explicitly will be passed on to ONEHALO_fitter.fit_to_radial_bins() 
     iterable_input = _create_iterable_input(method = args.method.lower(), mass_bins = mass_bins, verbose = False, save_params = True, plot = True,
-                            overwrite = overwrite, nwalkers = args.num_walkers, nsteps = args.num_steps, return_values = False)
+                            overwrite = overwrite, nwalkers = args.num_walkers, nsteps = args.num_steps, return_values = False, bins = args.bins)
 
     NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
@@ -104,6 +102,7 @@ else:
 
     match args.method.lower():
         case 'emcee':
+            print('Correct method chosen')
             for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
                 if verbose: print(f'WORKING ON MASS BIN M_1{mass_bin[0]}-1{mass_bin[1]}')
                 filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
@@ -112,10 +111,10 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath,
-                                        initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
+                                        # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
                 
-                res,err = fitter.fit_to_radial_bins(method='emcee', verbose = verbose, save_params = True, plot = True,
+                fitter.fit_to_radial_bins(method='emcee', verbose = verbose, save_params = True, plot = True, bins = args.bins,
                                                     overwrite = overwrite, nwalkers = args.num_walkers, nsteps = args.num_steps)
                 print()
 
@@ -130,9 +129,9 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
                 
-                res,err = fitter.fit_to_radial_bins(method='minimize', verbose = verbose, save_params = True,
+                fitter.fit_to_radial_bins(method='minimize', verbose = verbose, save_params = True,
                                                     plot = True, bins = args.bins, overwrite = overwrite)
 
         case 'both':
@@ -145,8 +144,9 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
-                res,err = fitter.fit_to_radial_bins(method='minimize', verbose = verbose, save_params = True, plot = True, bins = args.bins, overwrite = overwrite)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
+
+                fitter.fit_to_radial_bins(method='minimize', verbose = verbose, save_params = True, plot = True, bins = args.bins, overwrite = overwrite)
                 print(f'MINIMIZE FINISHED ON {filename}')
                 res,err = fitter.fit_to_radial_bins(method='emcee', verbose = verbose, save_params = True, plot = True,
                                                     overwrite = overwrite, nwalkers = args.num_walkers, nsteps = args.num_steps)

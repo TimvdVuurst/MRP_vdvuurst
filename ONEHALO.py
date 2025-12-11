@@ -81,10 +81,16 @@ class ONEHALO:
 
 def mod_gaussian(v, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
     # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
+
     norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)* np.sqrt(2 * np.pi))
     vsq = -1 * np.square(v) * 0.5
     return norm * ((1-lambda_) * np.exp(vsq / sigma1**2) + lambda_ * np.exp(vsq / sigma2**2))
 
+    #BELOW is lambda log-scaled
+    lambda_10 = 10**lambda_
+    norm = 1 / (((1- lambda_10) * sigma1 + lambda_10 * sigma2)* np.sqrt(2 * np.pi))
+    vsq = -1 * np.square(v) * 0.5
+    return norm * ((1-lambda_10) * np.exp(vsq / sigma1**2) + lambda_10 * np.exp(vsq / sigma2**2))
 
 def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
     integral, _ = Romberg(x_i, x_f, lambda x: mod_gaussian(x,sigma1,sigma2,lambda_)) 
@@ -92,11 +98,9 @@ def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
     
 def log_prior(theta):
     sigma_1, sigma_2, lambda_ = theta
-    #TODO: find out if there exists and x such that sigma_1 < x and sigma_2 >= x always, trying 450 now
-    #enforce sigma_1 > sigma_2 to break degeneracy, keep only if above doesn't work
-    # sigma_border = 400.
     # if sigma_border <= sigma_1 <= 1500 and 50 < sigma_2 < sigma_border and 0 <= lambda_ <= 1.0:
-    if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
+    # if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
+    if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and -np.inf < lambda_ <= 0.:
         return 0.0
     return -np.inf
 
@@ -189,15 +193,16 @@ class ONEHALO_fitter:
                 self.initial_param_dict = {"sigma_1": self.initial_param_dict['sigma_1'],
                                             "sigma_2": self.initial_param_dict['sigma_2'], 
                                             #   "lambda":np.random.normal(self.initial_param_dict['lambda'], 0.25)}
-                                            "lambda": 0.5} # start lambda in the middle of its prior space
+                                            "lambda": 1.} # start lambda in the middle of its prior space
 
         else:
             # some random stuff in the ballpark of where we want them to kickstart
             if joint:
                 self.initial_param_dict = {"p": -227.7,"n": 0.22,"q": 37.6,"b": 396.4,"m": 7.8,
                                            "c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
+            # These values are emprically in the right region. Mind that lambda here is 10**lambda so equivalent to lambda = 1.
             else:
-                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 100.0, 'lambda':0.5} 
+                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':0.} 
 
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
@@ -216,9 +221,8 @@ class ONEHALO_fitter:
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
         ndim = init_guess.shape[0]
         noise = np.random.randn(nwalkers, ndim)
-        noise[:,-1] *= 1e-4 #smaller for lambda
-        pos = init_guess + noise
-        # prior_check = prior_func(pos)
+        noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
+        pos = init_guess - noise
 
         if not use_binned:
             sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data,))#, moves = emcee.moves.GaussianMove(0.05))
@@ -379,7 +383,7 @@ class ONEHALO_fitter:
     
     # Standard values taken from Sowmya's code
     def fit_to_data(self, method: str, bins: int = 200, bounds: list = [(0.01, None), (0.0001, None), (-0.09, 1)],
-                     plot: bool = True, nwalkers: int = 8, nsteps: int = 1000, non_bin_threshold: int = 100000,
+                     plot: bool = True, nwalkers: int = 8, nsteps: int = 1000, non_bin_threshold: int = -1,
                      distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, **kwargs):
         
         method = method.lower()
@@ -387,8 +391,10 @@ class ONEHALO_fitter:
         if method not in allowed:
             raise ValueError(f'Method name "{method}" not recognized. Choose from {*allowed,}.')
         
-        use_binned = self.rel_vels.size > non_bin_threshold # if there's too many velocities, using the unbinned likelihood is much too slow
-    
+        if non_bin_threshold != -1: #default, then we never bin in the likelihood
+            use_binned = self.rel_vels.size > non_bin_threshold
+        else:
+            use_binned = False    
         filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results/M_{self.lower_mass}-{self.upper_mass}_fit.png'
 
         if method == 'minimize':
@@ -409,7 +415,7 @@ class ONEHALO_fitter:
     
     def fit_to_radial_bins(self, method:str, rbins = None, r_start: float = 0., r_stop:float = 5., r_steps: int = 18, 
                             bins: int = 200, bounds: list = [(50, 1000), (50, 1000), (0, 1)], plot: bool = True,
-                            nwalkers: int = 16, nsteps: int = 1500, non_bin_threshold: int = 100000,
+                            nwalkers: int = 16, nsteps: int = 1500, non_bin_threshold: int = -1,
                             distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True,
                             return_values = False, **kwargs):
         """_summary_
@@ -520,8 +526,10 @@ class ONEHALO_fitter:
             if verbose:
                 print(f"Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} contains {masked_data.size} datapoints")
 
-            # use_binned = masked_data.size > non_bin_threshold # MASSIVE speedup by setting a threshold 
-            use_binned = False
+            if non_bin_threshold != -1: #default, then we never bin in the likelihood
+                use_binned = masked_data.size > non_bin_threshold
+            else:
+                use_binned = False
            
             if method == 'emcee':
                 likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
@@ -530,6 +538,8 @@ class ONEHALO_fitter:
                                                      verbose = verbose, save_params = save_params, plot = plot, filename = filename)
                 results[i] = result
                 errors[i] = err
+                if not verbose:
+                    print(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
 
             else: # minimize
                 likelihood_func = mod_gaussian_neg_log_likelihood
@@ -545,13 +555,14 @@ class ONEHALO_fitter:
 
 
 #TODO: make this prettier
-def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit'):
+def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit', show = False):
     
     bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     bin_width= bin_edges[1] - bin_edges[0] 
     bin_widths = np.diff(bin_edges)  # The width of each bin
     number_density = bin_heights / bin_widths  # Normalize by bin width
+
     # Plot the histogram
     fig = plt.figure(figsize=(7,7))
     frame=fig.add_subplot(1,1,1)
@@ -559,14 +570,25 @@ def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit
     frame.set_ylabel('Number of galaxies per v', fontsize=16)
     frame.bar(bin_centers, number_density, width=bin_width, align='center')
     DAT=np.linspace(np.min(data),np.max(data),1000)
-    sigma,sigma1,lambda_=params 
+
+    sigma1, sigma2, lambda_ = params 
+
     hist_area=np.sum(bin_heights)
-    frame.plot(DAT,hist_area*f(DAT,sigma,sigma1,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
-    # frame.set_yscale("log")
+    frame.plot(DAT,hist_area*f(DAT,sigma1,sigma2,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
+
     frame.legend(fontsize=12.5, loc="upper right")
     frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
-    fig.savefig(filename, dpi=300)
-    plt.close()
+
+    weighted_sigma = np.average([sigma1, sigma2], weights = [1- lambda_, lambda_])
+    # weighted_sigma = np.average([sigma1, sigma2], weights = [1- 10**(lambda_), 10**(lambda_)])
+    # print(f'{weighted_sigma = }, {4* weighted_sigma = }')
+    frame.set_xlim(-4 * weighted_sigma, 4 * weighted_sigma)
+    
+    if not show:
+        fig.savefig(filename, dpi=300)
+        plt.close()
+    else:
+        plt.show()
 
 
 if __name__ == '__main__':
