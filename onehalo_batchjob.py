@@ -5,6 +5,7 @@ from plotting import format_plot
 import argparse
 from tqdm import tqdm
 from multiprocessing import Pool
+from functions import modified_logspace
 
 import warnings
 
@@ -24,20 +25,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
 parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') #always EXCLUSIVE upper bound
 parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Size of bins in dex. Defaults to 0.5.')
-parser.add_argument('-P', '--path_to_soap', type = str, default = SOAP_PATH_DEFAULT, help = 'Path specifying the SOAP-HBT data to be used. Should point to SOAP hdf5 file. Defaults to L1000N1800 @ z= 0.')
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
-parser.add_argument('-B', '--bins', type = int, default = 200, help = 'Number of velocity bins')
+parser.add_argument('-B', '--bins', type = int, default = 500, help = 'Number of velocity bins')
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
 parser.add_argument('-NS', '--num_steps', type = int, default = 1000, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
+parser.add_argument('-LL', '--log_lambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
+parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
-
 mass_range = np.arange(args.lower_mass, args.upper_mass + args.step, args.step).astype(np.float32)
 mass_bins = np.array([[mass_range[i],mass_range[i+1]] for i in range(len(mass_range)-1)])
-
 
 BASEPATH = '/disks/cosmodm/vdvuurst'
 data_dir = os.path.join(BASEPATH,f'data/OneHalo_{args.step}dex')
@@ -47,10 +47,23 @@ if not os.path.isdir(data_dir):
 overwrite = bool(args.overwrite)
 verbose = bool(args.verbose)
 multiprocess = bool(args.multiprocess) and len(mass_bins) > 1 #if we have only 1 mass bin we do not need to go through the hassle of multiprocessing
+log_lambda = bool(args.log_lambda)
+
+def create_kwargs(**kwargs):
+    return kwargs
+
+#NOTE: hardcoded r_start, r_stop and r_steps with this, might make modifiable later
+default_kwargs = create_kwargs(r_start= 0., r_stop = 5., r_steps = 18, bins= 200, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
+                            nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
+                            distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
+                            return_values = False, log_lambda = log_lambda)
 
 
 def _create_iterable_input(**kwargs):
     fitters = []
+    r_range = modified_logspace(kwargs['r_start'], kwargs['r_stop'], kwargs['r_steps']) 
+    kwargs['rbins'] = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)])
+
     for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir,filename)
@@ -64,7 +77,9 @@ def _create_iterable_input(**kwargs):
 
 def _run_experiment_radial_bins(inpt):
     fitter, mass_bin, kwargs = inpt
-    fitter.fit_to_radial_bins(**kwargs)
+    mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
+    kwargs['verbose'] = False
+    fitter.fit_to_radial_bins(datapath = mass_path, **kwargs)
     tqdm.write(f'MASS BIN 1{mass_bin[0]}-1{mass_bin[1]} dex COMPLETED')
 
 
@@ -74,8 +89,7 @@ format_plot()
 if multiprocess:
     #In multiprocess we set verbose to false since it will interfere too much with output
     # all kwargs given here explicitly will be passed on to ONEHALO_fitter.fit_to_radial_bins() 
-    iterable_input = _create_iterable_input(method = args.method.lower(), mass_bins = mass_bins, verbose = False, save_params = True, plot = True,
-                            overwrite = overwrite, nwalkers = args.num_walkers, nsteps = args.num_steps, return_values = False, bins = args.bins)
+    iterable_input = _create_iterable_input(method = args.method.lower(), mass_bins = mass_bins, **default_kwargs)
 
     NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
@@ -84,25 +98,9 @@ if multiprocess:
 
 
 else:
-    #TODO uncomment, maybe make an argument that can control whether we even catalogue at all? just to save the commenting and overhead
-    # for mass_bin in tqdm(reversed(mass_bins)): # High mass bins first, since these have the least entries
-    #     filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
-    #     filepath =  os.path.join(data_dir,filename)
-    #     file_exists = os.path.isfile(filename)
-
-    #     if file_exists and not overwrite:
-    #         print(f'{filename} already exists and --overwrite (-O) is set to false, skipping...\n')
-    #         continue
-    #     else:
-    #         if file_exists:
-    #             print(f'{filename} already exists, overwriting...\n')
-        
-    #         onehalo.create_catalogue(massbin = mass_bin, filename = filepath)
-
 
     match args.method.lower():
         case 'emcee':
-            print('Correct method chosen')
             for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
                 if verbose: print(f'WORKING ON MASS BIN M_1{mass_bin[0]}-1{mass_bin[1]}')
                 filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
@@ -114,10 +112,15 @@ else:
                 fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
                                         # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
                 
-                fitter.fit_to_radial_bins(method='emcee', verbose = verbose, save_params = True, plot = True, bins = args.bins,
-                                                    overwrite = overwrite, nwalkers = args.num_walkers, nsteps = args.num_steps)
+                r_range = modified_logspace(default_kwargs['r_start'], default_kwargs['r_stop'], default_kwargs['r_steps']) 
+                default_kwargs['rbins'] = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)])
+                mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
+
+                fitter.fit_to_radial_bins(method='emcee',datapath = mass_path, **default_kwargs)
                 print()
 
+
+    #TODO: stuff with kwargs will break, but below will prob never be used anyway
         case 'minimize':
             for mass_bin in tqdm(reversed(mass_bins)): # High mass bins first, since these have the least entries
                 if verbose: print()

@@ -7,11 +7,13 @@ import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 import os
 from functions import Romberg, modified_logspace
-from TWOHALO import _make_nbound_mask
 from json import load, dump
-
 import emcee
 from corner import corner
+from scipy.special import gammainc
+
+#TODO: expand accordingly
+latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'log_lambda':r'$\log_{10}\left(\lambda\right)$'}
 
 
 class ONEHALO:
@@ -71,11 +73,29 @@ class ONEHALO:
         relative_COMs = SatCOMs - np.repeat(HostCOMs, subhalos_per_host, axis = 0)
         relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
 
-        return relative_COMs, relative_vels
+        with h5py.File(self.filename, 'w') as file:
+            file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
+            file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+    
+    def create_radial_catalogue(self, radial_bin: Tuple[np.float32, np.float32], filename:str):
+        mass_filename = filename.replace(f'/r_{radial_bin[0]:.2f}-{radial_bin[1]:.2f}','')
 
-        # with h5py.File(self.filename, 'w') as file:
-        #     file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
-        #     file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+        with h5py.File(mass_filename, 'r') as handle:
+            rel_vels = handle['rel_vels'][:] 
+            rel_pos = handle['rel_pos'][:] 
+
+        rel_sq_dist = np.square(rel_pos).sum(axis = 1)
+
+        radial_mask = (radial_bin[0]**2 <= rel_sq_dist) & (rel_sq_dist <= radial_bin[1]**2)
+        masked_data = rel_vels[radial_mask]
+
+        if masked_data.size < 100: #TODO: check minimum, maybe even more - like 1000? make modifiable? also check in fit_to_radial_bins if changed
+            return True
+
+        with h5py.File(filename, 'w') as file:
+            file.create_dataset('rel_vels', data = masked_data, dtype = np.float32)
+
+
 
 ## GENERAL FUNCTIONS 
 
@@ -86,7 +106,7 @@ def mod_gaussian(v, sigma1, sigma2, lambda_): #for regular (i.e. untransformed v
     vsq = -1 * np.square(v) * 0.5
     return norm * ((1-lambda_) * np.exp(vsq / sigma1**2) + lambda_ * np.exp(vsq / sigma2**2))
 
-    #BELOW is lambda log-scaled
+def mod_gaussian_loglambda(v, sigma1, sigma2, lambda_): #for lambda in log scale
     lambda_10 = 10**lambda_
     norm = 1 / (((1- lambda_10) * sigma1 + lambda_10 * sigma2)* np.sqrt(2 * np.pi))
     vsq = -1 * np.square(v) * 0.5
@@ -98,8 +118,12 @@ def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
     
 def log_prior(theta):
     sigma_1, sigma_2, lambda_ = theta
-    # if sigma_border <= sigma_1 <= 1500 and 50 < sigma_2 < sigma_border and 0 <= lambda_ <= 1.0:
-    # if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
+    if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
+        return 0.0
+    return -np.inf
+
+def log_prior_loglambda(theta):
+    sigma_1, sigma_2, lambda_ = theta
     if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and -np.inf < lambda_ <= 0.:
         return 0.0
     return -np.inf
@@ -126,13 +150,15 @@ def mod_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full wi
     
     return log_L
 
-def mod_gaussian_log_likelihood(params, data): #full with prior
-    lp = log_prior(params)
+def mod_gaussian_log_likelihood(params, data, log_lambda): #full with prior
+    prior = log_prior_loglambda if log_lambda else log_prior
+    lp = prior(params)
     if not np.isfinite(lp):
         return -np.inf
 
     sigma1, sigma2, lambda_ = params
-    mu_i = mod_gaussian(data, sigma1, sigma2, lambda_)
+    mu_func = mod_gaussian_loglambda if log_lambda else mod_gaussian
+    mu_i = mu_func(data, sigma1, sigma2, lambda_)
     mu_i[mu_i < 0] = 0 # penalize negative values
     return np.sum(np.log(mu_i)) + 1. #+1. for integral
 
@@ -215,7 +241,7 @@ class ONEHALO_fitter:
     @staticmethod
     def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = True,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
-                                     plot = True, verbose = False, filename = 'Mfit', save_params = False, prior_func = log_prior):
+                                     plot = True, verbose = False, filename = 'Mfit', save_params = False, log_lambda = False, **kwargs):
         
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
@@ -224,8 +250,10 @@ class ONEHALO_fitter:
         noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
         pos = init_guess - noise
 
+        log_lambda_str = '_log_lambda' if log_lambda else ''
+
         if not use_binned:
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data,))#, moves = emcee.moves.GaussianMove(0.05))
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, log_lambda)) #, moves = emcee.moves.GaussianMove(0.05))
                                             #  moves=[(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)])
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
@@ -265,7 +293,7 @@ class ONEHALO_fitter:
             
             axes[-1].set_xlabel("Step number")
 
-            plt.savefig(filename + '_walkers.png', dpi = 200)
+            plt.savefig(filename + f'_walkers{log_lambda_str}.png', dpi = 200)
             plt.close()
 
             #corner plot
@@ -274,7 +302,7 @@ class ONEHALO_fitter:
             fig = corner(flat_samples, labels = param_labels, quiet = True,
                             quantiles=[0.16, 0.5, 0.84])
 
-            fig.savefig(filename + "_corner.png", dpi = 200)
+            fig.savefig(filename + f"_corner{log_lambda_str}.png", dpi = 200)
             plt.close(fig)
         
         result = np.zeros(ndim)
@@ -287,12 +315,12 @@ class ONEHALO_fitter:
             errs[i,0] = err[0]
             errs[i,1] = err[1]
         
-        if save_params:
-            param_dict = dict(zip(param_names, result.tolist()))
-            param_dict['errors'] = errs.tolist()
-            param_dict['nwalkers'] = nwalkers
-            param_dict['nsteps'] = nsteps
+        param_dict = dict(zip(param_names, result.tolist()))
+        param_dict['errors'] = errs.tolist()
+        param_dict['nwalkers'] = nwalkers
+        param_dict['nsteps'] = nsteps
 
+        if save_params:
             head, rtail = os.path.split(filename)
             masstail = os.path.split(head)[1]
 
@@ -300,17 +328,19 @@ class ONEHALO_fitter:
             if not os.path.isdir(os.path.join(param_path, masstail)):
                 os.mkdir(os.path.join(param_path, masstail))
             
-            param_path = os.path.join(param_path, masstail, rtail + '.json')
+            param_path = os.path.join(param_path, masstail, rtail + f'{log_lambda_str}.json')
             
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1)
         
         # Plot if function provided
         if plot:
-            plot_distribution_gaussian_mod(mod_gaussian, result, data, bins=bins, distname="Modified Gaussian", filename = filename + '_fit.png')
+            if log_lambda:
+                plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit{log_lambda_str}.png', log_lambda = True)
+            else:
+                plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit.png', log_lambda = False)
 
-
-        return result, errs
+        return param_dict
         # return samples
 
     @staticmethod
@@ -405,19 +435,65 @@ class ONEHALO_fitter:
                                                               save_params = save_params)
 
         else:
-            #NOTE the self.rel_vel_sq - this is pre-calculated in __init__ to save massive time but needs to be passed here
-            # since unbinned method uses a lot of calls on the model
             likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
 
             return self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, likelihood_func,
                                                      nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
                                                      verbose = verbose, save_params = save_params, plot = plot, filename = filename)
     
-    def fit_to_radial_bins(self, method:str, rbins = None, r_start: float = 0., r_stop:float = 5., r_steps: int = 18, 
+
+    def _fit_to_catalogued_radial_bins(self, method:str, rbins: np.array, datapath, **kwargs):
+        #datapath should go to massbin folder with hdf5 files
+        method = method.lower()
+        allowed = ['emcee','minimize']
+        if method not in allowed:
+            raise ValueError(f'Method name "{method}" not recognized. Choose from {*allowed,}.')
+        
+        if kwargs['return_values']:
+            results = np.zeros((len(rbins), 3))
+            errors = np.zeros((len(rbins), 3, 2))
+        
+        for i,rbin in enumerate(rbins):
+            rpath = os.path.join(datapath, f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
+
+            with h5py.File(rpath, 'r') as file:
+                masked_data = file['rel_vels'][:]
+
+            filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
+            if kwargs['non_bin_threshold'] != -1: #default, then we never bin in the likelihood
+                use_binned = masked_data.size > kwargs['non_bin_threshold']
+            else:
+                use_binned = False
+
+            if method == 'emcee':
+                likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
+                output = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
+                                                                filename = filename, use_binned = use_binned, **kwargs)
+                
+                if kwargs['return_values']:
+                    result, err = output   
+                    results[i] = result
+                    errors[i] = err
+
+                if not kwargs['verbose']:
+                    print(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
+
+            else: # minimize
+                likelihood_func = mod_gaussian_neg_log_likelihood
+                result = self._fit_modified_gaussian_minimize(data = masked_data, initial_guess= self.initial_param_dict, filename = filename,
+                                                            neg_log_likelihood_func = likelihood_func, use_binned = use_binned, **kwargs)
+                if kwargs['return_values']:
+                    results[i] = result.x
+        
+        if kwargs['return_values']:
+            return results, errors
+
+
+    def _fit_to_non_catalogued_radial_bins(self, method:str, rbins = None, r_start: float = 0., r_stop:float = 5., r_steps: int = 18, 
                             bins: int = 200, bounds: list = [(50, 1000), (50, 1000), (0, 1)], plot: bool = True,
-                            nwalkers: int = 16, nsteps: int = 1500, non_bin_threshold: int = -1,
+                            nwalkers: int = 16, nsteps: int = 1000, non_bin_threshold: int = -1,
                             distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True,
-                            return_values = False, **kwargs):
+                            return_values = False, log_lambda = False, **kwargs):
         """_summary_
 
         Args:
@@ -449,16 +525,17 @@ class ONEHALO_fitter:
         if method not in allowed:
             raise ValueError(f'Method name "{method}" not recognized. Choose from {*allowed,}.')
         
-        #TODO: update this with below code
-        if rbins:
-            if len(rbin) > 2:
+        if rbins is not None:
+            if len(rbins) > 2:
                 results = np.zeros((len(rbins), 3))
                 errors = np.zeros_like(results)
                 for rbin in rbins:
                     radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
                     masked_data = self.rel_vels[radial_mask]
-                    use_binned = masked_data.size < non_bin_threshold
-                
+                    if non_bin_threshold != -1: #default, then we never bin in the likelihood
+                        use_binned = masked_data.size > non_bin_threshold
+                    else:
+                        use_binned = False                
                     filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
                 
                     if method == 'emcee':
@@ -480,19 +557,24 @@ class ONEHALO_fitter:
                 return results, errors
 
             else:
-                radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
+                radial_mask = (rbins[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbins[1]**2)
                 masked_data = self.rel_vels[radial_mask]
-                use_binned = masked_data.size < non_bin_threshold
-            
-                filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}_r_{rbin[0]:.2f}-{rbin[1]:.2f}_fit.png'
+                if non_bin_threshold != -1: #default, then we never bin in the likelihood
+                    use_binned = masked_data.size > non_bin_threshold
+                else:
+                    use_binned = False            
+
+                filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
+                if os.path.isfile(f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/{method}/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}.json') and not overwrite:
+                    print(f'M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f} already done, skipping...')
             
                 if method == 'emcee':
                     likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
-                    result, err = self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, mod_gaussian_log_likelihood,
-                                                        nwalkers = nwalkers, nsteps = nsteps,
-                                                        verbose = verbose, save_params = save_params, plot = plot, filename = filename)
-
-                    return result, err
+                    result, err = self._fit_modified_gaussian_emcee(masked_data, bins, self.initial_param_dict, likelihood_func,
+                                                     nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, log_lambda = log_lambda)
+                    if return_values:
+                        return result, err
 
                 else:
                     likelihood_func = mod_gaussian_neg_log_likelihood_binned if use_binned else mod_gaussian_neg_log_likelihood
@@ -500,13 +582,14 @@ class ONEHALO_fitter:
                                                                 neg_log_likelihood_func = likelihood_func, plot = plot,
                                                                 distname = distname, binned = False, verbose = verbose, filename = filename,
                                                                 save_params = save_params)
-                    return result, np.zeros_like(result)
+                    if return_values:
+                        return result, np.zeros_like(result)
         
-        # if an rbin is not specified, we log-space the bins in the function
-
+        # if an rbin is not specified, we log-space the bins in the function manually
         rbins = modified_logspace(r_start, r_stop, r_steps) 
-        results = np.zeros((r_steps - 1, 3))
-        errors = np.zeros((r_steps - 1, 3, 2))
+        if return_values:
+            results = np.zeros((r_steps - 1, 3))
+            errors = np.zeros((r_steps - 1, 3, 2))
         for i in range(r_steps - 1): 
             rbin = (rbins[i], rbins[i+1])
 
@@ -535,9 +618,10 @@ class ONEHALO_fitter:
                 likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
                 result, err = self._fit_modified_gaussian_emcee(masked_data, bins, self.initial_param_dict, likelihood_func,
                                                      nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
-                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename)
-                results[i] = result
-                errors[i] = err
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, log_lambda = log_lambda)
+                if return_values:   
+                    results[i] = result
+                    errors[i] = err
                 if not verbose:
                     print(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
 
@@ -547,15 +631,75 @@ class ONEHALO_fitter:
                                                             neg_log_likelihood_func = likelihood_func, plot = plot,
                                                             distname = distname, use_binned = use_binned, verbose = verbose, filename = filename,
                                                             save_params = save_params)
-                results[i] = result.x
+                if return_values:
+                    results[i] = result.x
         
         if return_values:
             return results, errors
 
 
+    def fit_to_radial_bins(self, catalogued: bool = True, **kwargs):
+
+        if catalogued:
+            self._fit_to_catalogued_radial_bins(**kwargs)
+        else:
+            self._fit_to_non_catalogued_radial_bins(**kwargs)
+
+def plot_all_fits(massbin):
+    #scraper of data and params. preferably data that already exists as a catalogue
+    pass
+
+def _Gstat(O,E):
+    """G-test statistic.
+
+    Args:
+        O (array): Observed counts. MUST be integers.
+        E (array): Expected counts under the null hypothesis e.g. the model predictions.
+
+    Returns:
+        G (float): The G-statistic value
+    """
+    G = 0
+    for i, Oi in enumerate(O):
+        if Oi == 0:
+            continue
+        G += Oi * np.log(Oi/E[i])
+    return 2*G
+
+def _Qval(x,k):
+    """Find the Q-value aka p-value from a given chi^2 distributed statistic.
+
+    Args:
+        x (float): Statistic value
+        k (int): The degrees of freedom of the problem.
+
+    Returns:
+        Q (float): The Q-value of the statistic given the degrees of freedom.
+    """
+
+    #gammainc in scipy is the *regularized* incomplete lower gamma function so /gamma(k/2) is implicit
+    return 1 - gammainc(k/2,x/2)
+
+def get_Qvalue(param_dict, data, bins = 200, sanitycheck = False):
+
+    bin_heights, bin_edges = np.histogram(data, bins = bins, density=False)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    hist_area=np.sum(bin_heights)
+
+    model = hist_area * np.array([mod_gaussian_integral(param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda'],
+                                                               bin_edges[i], bin_edges[i+1]) for i in range(len(bin_centers))])
+    
+    Gval = _Gstat(bin_heights, model) 
+    if sanitycheck:
+        print(f"{sum(model) = }, {sum(bin_heights) = }")
+        print(f'{Gval = }')
+    #dof = 4 since three parameters and 1 extra less since if N -1 bins are filled we know exactly the Nth bin count
+    return _Qval(Gval, len(bin_heights) - 4)
+
+
 
 #TODO: make this prettier
-def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit', show = False):
+def plot_distribution_gaussian_mod(f,param_dict,data,bins,distname, filename = 'Mfit', show = False, log_lambda = False, sanitycheck = False):
     
     bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -571,7 +715,20 @@ def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit
     frame.bar(bin_centers, number_density, width=bin_width, align='center')
     DAT=np.linspace(np.min(data),np.max(data),1000)
 
-    sigma1, sigma2, lambda_ = params 
+    sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
+    paramstr = ''
+    for i,param in enumerate(['sigma_1', 'sigma_2', 'lambda']):
+        if i == 2 and log_lambda:
+            param_latex = 'log_' + param
+        else:
+            param_latex = param
+
+        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.2f}^{{+{param_dict['errors'][i][0]:.2f}}}_{{-{param_dict['errors'][i][1]:.2f}}}$\n'
+    
+    Qval = get_Qvalue(param_dict, data, bins, sanitycheck = False)
+    paramstr += f'Q = {Qval:.2f}'
+
+    frame.text(0.155, 0.71, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12.5)
 
     hist_area=np.sum(bin_heights)
     frame.plot(DAT,hist_area*f(DAT,sigma1,sigma2,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
@@ -579,9 +736,13 @@ def plot_distribution_gaussian_mod(f,params,data,bins,distname, filename = 'Mfit
     frame.legend(fontsize=12.5, loc="upper right")
     frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
 
-    weighted_sigma = np.average([sigma1, sigma2], weights = [1- lambda_, lambda_])
-    # weighted_sigma = np.average([sigma1, sigma2], weights = [1- 10**(lambda_), 10**(lambda_)])
-    # print(f'{weighted_sigma = }, {4* weighted_sigma = }')
+    if log_lambda:
+        weighted_sigma = np.average([sigma1, sigma2], weights = [1-10**(lambda_), 10**(lambda_)])
+        if sanitycheck:
+            print(f'{4*weighted_sigma = }')
+    else:
+        weighted_sigma = np.average([sigma1, sigma2], weights = [1- lambda_, lambda_])
+
     frame.set_xlim(-4 * weighted_sigma, 4 * weighted_sigma)
     
     if not show:
