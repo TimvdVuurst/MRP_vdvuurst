@@ -11,6 +11,7 @@ from json import load, dump
 import emcee
 from corner import corner
 from scipy.special import gammainc
+import warnings
 
 #TODO: expand accordingly
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'log_lambda':r'$\log_{10}\left(\lambda\right)$'}
@@ -118,13 +119,13 @@ def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
     
 def log_prior(theta):
     sigma_1, sigma_2, lambda_ = theta
-    if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
+    if sigma_2 < sigma_1 <= 1500. and 1. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
         return 0.0
     return -np.inf
 
 def log_prior_loglambda(theta):
     sigma_1, sigma_2, lambda_ = theta
-    if sigma_2 < sigma_1 <= 1500. and 50. <= sigma_2 < sigma_1 and -np.inf < lambda_ <= 0.:
+    if sigma_2 < sigma_1 <= 1500. and 1. <= sigma_2 < sigma_1 and -np.inf < lambda_ <= 0.:
         return 0.0
     return -np.inf
 
@@ -225,9 +226,9 @@ class ONEHALO_fitter:
             if joint:
                 self.initial_param_dict = {"p": -227.7,"n": 0.22,"q": 37.6,"b": 396.4,"m": 7.8,
                                            "c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
-            # These values are emprically in the right region. Mind that lambda here is 10**lambda so equivalent to lambda = 1.
+            # These values are emprically in the right region. 
             else:
-                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':float(log_lambda)} 
+                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':float(not log_lambda)} # init lambda at 1 if not log, 0 if log
 
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
@@ -248,7 +249,9 @@ class ONEHALO_fitter:
         #TODO fix noise so that it is redrawn when it lies outside the bounds, not just cast to absolute value or smth
         noise = np.random.randn(nwalkers, ndim)
         noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
-        pos = init_guess - noise
+        if log_lambda:
+            noise[:, -1] *= -1
+        pos = init_guess + noise
 
         log_lambda_str = '_log_lambda' if log_lambda else ''
 
@@ -456,8 +459,13 @@ class ONEHALO_fitter:
         for i,rbin in enumerate(rbins):
             rpath = os.path.join(datapath, f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
 
-            with h5py.File(rpath, 'r') as file:
-                masked_data = file['rel_vels'][:]
+            try:
+                with h5py.File(rpath, 'r') as file:
+                    masked_data = file['rel_vels'][:]
+            except FileNotFoundError:
+                if kwargs['verbose']:
+                    tqdm.write(f'{rpath} does not exist, skipping...')
+                continue
 
             filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
             if kwargs['non_bin_threshold'] != -1: #default, then we never bin in the likelihood
@@ -602,8 +610,6 @@ class ONEHALO_fitter:
             radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
             masked_data = self.rel_vels[radial_mask]
 
-            print(f'IN RADIAL BIN {rbin[0]:.2f}-{rbin[1]:.2f} THE MASKED DATA HAS SHAPE {masked_data.shape}')
-            continue
 
             if masked_data.size < 100: #TODO: check minimum, maybe even more - like 1000? make modifiable?
                 if verbose:
@@ -643,7 +649,6 @@ class ONEHALO_fitter:
 
 
     def fit_to_radial_bins(self, catalogued: bool = True, **kwargs):
-
         if catalogued:
             self._fit_to_catalogued_radial_bins(**kwargs)
         else:
@@ -685,7 +690,7 @@ def _Qval(x,k):
     return 1 - gammainc(k/2,x/2)
 
 def get_Qvalue(param_dict, data, bins = 200, sanitycheck = False):
-
+    warnings.resetwarnings()
     bin_heights, bin_edges = np.histogram(data, bins = bins, density=False)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     hist_area=np.sum(bin_heights)
@@ -698,6 +703,7 @@ def get_Qvalue(param_dict, data, bins = 200, sanitycheck = False):
         print(f"{sum(model) = }, {sum(bin_heights) = }")
         print(f'{Gval = }')
     #dof = 4 since three parameters and 1 extra less since if N -1 bins are filled we know exactly the Nth bin count
+    warnings.filterwarnings('ignore')
     return _Qval(Gval, len(bin_heights) - 4)
 
 
@@ -721,13 +727,15 @@ def plot_distribution_gaussian_mod(f,param_dict,data,bins,distname, filename = '
 
     sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
     paramstr = ''
+    sig_digits = 4
     for i,param in enumerate(['sigma_1', 'sigma_2', 'lambda']):
         if i == 2 and log_lambda:
             param_latex = 'log_' + param
+            sig_digits = 3
         else:
             param_latex = param
 
-        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.4}^{{+{param_dict['errors'][i][0]:.3}}}_{{-{param_dict['errors'][i][1]:.3}}}$\n'
+        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][0]:.{sig_digits -1}}}}_{{-{param_dict['errors'][i][1]:.{sig_digits -1}}}}$\n'
     
     Qval = get_Qvalue(param_dict, data, bins, sanitycheck = False)
     paramstr += f'Q = {Qval:.3}'

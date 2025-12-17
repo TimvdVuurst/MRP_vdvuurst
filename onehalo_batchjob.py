@@ -30,7 +30,7 @@ parser.add_argument('-B', '--bins', type = int, default = 500, help = 'Number of
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
-parser.add_argument('-NS', '--num_steps', type = int, default = 1000, help = 'Number of walker steps passed to emcee.')
+parser.add_argument('-NS', '--num_steps', type = int, default = 1500, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
 parser.add_argument('-LL', '--log_lambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
