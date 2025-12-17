@@ -2,3 +2,4 @@ data
 RSDenv
 *.h5
 __pycache__
+figures

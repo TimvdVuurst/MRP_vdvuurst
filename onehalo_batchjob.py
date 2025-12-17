@@ -44,10 +44,12 @@ data_dir = os.path.join(BASEPATH,f'data/OneHalo_{args.step}dex')
 if not os.path.isdir(data_dir):
     os.mkdir(data_dir)
 
+# Set some args to bools
 overwrite = bool(args.overwrite)
-verbose = bool(args.verbose)
 multiprocess = bool(args.multiprocess) and len(mass_bins) > 1 #if we have only 1 mass bin we do not need to go through the hassle of multiprocessing
+verbose = bool(args.verbose) and not multiprocess # set verbose to false during multiprocess
 log_lambda = bool(args.log_lambda)
+catalogued = bool(args.catalogued)
 
 def create_kwargs(**kwargs):
     return kwargs
@@ -68,18 +70,16 @@ def _create_iterable_input(**kwargs):
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir,filename)
 
-        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
-            # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, log_lambda = kwargs['log_lambda'])
 
         fitters.append(fitter)
 
-    return [[f, m, kwargs] for f,m in zip(fitters,mass_bins)]
+    return [[f, m, kwargs] for f,m in zip(fitters,reversed(mass_bins))]
 
 def _run_experiment_radial_bins(inpt):
     fitter, mass_bin, kwargs = inpt
     mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
-    kwargs['verbose'] = False
-    fitter.fit_to_radial_bins(datapath = mass_path, **kwargs)
+    fitter.fit_to_radial_bins(catalogued = catalogued, datapath = mass_path, **kwargs)
     tqdm.write(f'MASS BIN 1{mass_bin[0]}-1{mass_bin[1]} dex COMPLETED')
 
 
@@ -87,7 +87,6 @@ def _run_experiment_radial_bins(inpt):
 format_plot()
 
 if multiprocess:
-    #In multiprocess we set verbose to false since it will interfere too much with output
     # all kwargs given here explicitly will be passed on to ONEHALO_fitter.fit_to_radial_bins() 
     iterable_input = _create_iterable_input(method = args.method.lower(), mass_bins = mass_bins, **default_kwargs)
 
@@ -98,7 +97,6 @@ if multiprocess:
 
 
 else:
-
     match args.method.lower():
         case 'emcee':
             for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
@@ -109,7 +107,7 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, log_lambda = default_kwargs['log_lambda'])
                                         # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
                 
                 r_range = modified_logspace(default_kwargs['r_start'], default_kwargs['r_stop'], default_kwargs['r_steps']) 

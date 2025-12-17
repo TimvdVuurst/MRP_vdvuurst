@@ -156,10 +156,9 @@ def mod_gaussian_log_likelihood(params, data, log_lambda): #full with prior
     if not np.isfinite(lp):
         return -np.inf
 
-    sigma1, sigma2, lambda_ = params
     mu_func = mod_gaussian_loglambda if log_lambda else mod_gaussian
-    mu_i = mu_func(data, sigma1, sigma2, lambda_)
-    mu_i[mu_i < 0] = 0 # penalize negative values
+    mu_i = mu_func(data, *params)
+    mu_i[mu_i < 0] = 0 # cast negative values to 0, raises errors otherwise
     return np.sum(np.log(mu_i)) + 1. #+1. for integral
 
 def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
@@ -193,7 +192,7 @@ def mod_gaussian_neg_log_likelihood(params, data):
      
 
 class ONEHALO_fitter:
-    def __init__(self, PATH: str, initial_param_file: str = None, joint: bool = False):
+    def __init__(self, PATH: str, initial_param_file: str = None, joint: bool = False, log_lambda: bool = False):
         """_summary_
 
         Args:
@@ -228,7 +227,7 @@ class ONEHALO_fitter:
                                            "c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
             # These values are emprically in the right region. Mind that lambda here is 10**lambda so equivalent to lambda = 1.
             else:
-                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':0.} 
+                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':float(log_lambda)} 
 
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
@@ -239,13 +238,14 @@ class ONEHALO_fitter:
 
 
     @staticmethod
-    def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = True,
+    def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = False,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
                                      plot = True, verbose = False, filename = 'Mfit', save_params = False, log_lambda = False, **kwargs):
         
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
         ndim = init_guess.shape[0]
+        #TODO fix noise so that it is redrawn when it lies outside the bounds, not just cast to absolute value or smth
         noise = np.random.randn(nwalkers, ndim)
         noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
         pos = init_guess - noise
@@ -475,7 +475,7 @@ class ONEHALO_fitter:
                     results[i] = result
                     errors[i] = err
 
-                if not kwargs['verbose']:
+                if kwargs['verbose']:
                     print(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
 
             else: # minimize
@@ -541,7 +541,7 @@ class ONEHALO_fitter:
                     if method == 'emcee':
                         likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
                         result, err = self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, mod_gaussian_log_likelihood,
-                                                            nwalkers = nwalkers, nsteps = nsteps,
+                                                            nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
                                                             verbose = verbose, save_params = save_params, plot = plot, filename = filename)
                         results[i] = result
                         errors[i] = err
@@ -559,6 +559,7 @@ class ONEHALO_fitter:
             else:
                 radial_mask = (rbins[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbins[1]**2)
                 masked_data = self.rel_vels[radial_mask]
+
                 if non_bin_threshold != -1: #default, then we never bin in the likelihood
                     use_binned = masked_data.size > non_bin_threshold
                 else:
@@ -600,6 +601,9 @@ class ONEHALO_fitter:
             
             radial_mask = (rbin[0]**2 <= self.rel_sq_dist) & (self.rel_sq_dist <= rbin[1]**2)
             masked_data = self.rel_vels[radial_mask]
+
+            print(f'IN RADIAL BIN {rbin[0]:.2f}-{rbin[1]:.2f} THE MASKED DATA HAS SHAPE {masked_data.shape}')
+            continue
 
             if masked_data.size < 100: #TODO: check minimum, maybe even more - like 1000? make modifiable?
                 if verbose:
@@ -723,10 +727,10 @@ def plot_distribution_gaussian_mod(f,param_dict,data,bins,distname, filename = '
         else:
             param_latex = param
 
-        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.2f}^{{+{param_dict['errors'][i][0]:.2f}}}_{{-{param_dict['errors'][i][1]:.2f}}}$\n'
+        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.4}^{{+{param_dict['errors'][i][0]:.3}}}_{{-{param_dict['errors'][i][1]:.3}}}$\n'
     
     Qval = get_Qvalue(param_dict, data, bins, sanitycheck = False)
-    paramstr += f'Q = {Qval:.2f}'
+    paramstr += f'Q = {Qval:.3}'
 
     frame.text(0.155, 0.71, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12.5)
 
@@ -746,7 +750,7 @@ def plot_distribution_gaussian_mod(f,param_dict,data,bins,distname, filename = '
     frame.set_xlim(-4 * weighted_sigma, 4 * weighted_sigma)
     
     if not show:
-        fig.savefig(filename, dpi=300)
+        fig.savefig(filename, dpi=200)
         plt.close()
     else:
         plt.show()
