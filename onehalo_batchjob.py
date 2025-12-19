@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from ONEHALO import ONEHALO, ONEHALO_fitter
-from plotting import format_plot
+from onehalo_plotter import format_plot
 import argparse
 from tqdm import tqdm
 from multiprocessing import Pool
@@ -32,7 +32,7 @@ parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether 
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
 parser.add_argument('-NS', '--num_steps', type = int, default = 1500, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
-parser.add_argument('-LL', '--log_lambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
+parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
@@ -48,7 +48,7 @@ if not os.path.isdir(data_dir):
 overwrite = bool(args.overwrite)
 multiprocess = bool(args.multiprocess) and len(mass_bins) > 1 #if we have only 1 mass bin we do not need to go through the hassle of multiprocessing
 verbose = bool(args.verbose) and not multiprocess # set verbose to false during multiprocess
-log_lambda = bool(args.log_lambda)
+loglambda = bool(args.loglambda)
 catalogued = bool(args.catalogued)
 
 def create_kwargs(**kwargs):
@@ -58,7 +58,7 @@ def create_kwargs(**kwargs):
 default_kwargs = create_kwargs(r_start= 0., r_stop = 5., r_steps = 18, bins= 200, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
-                            return_values = False, log_lambda = log_lambda)
+                            return_values = False, loglambda = loglambda)
 
 
 def _create_iterable_input(**kwargs):
@@ -70,7 +70,7 @@ def _create_iterable_input(**kwargs):
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir,filename)
 
-        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, log_lambda = kwargs['log_lambda'])
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, loglambda = kwargs['loglambda'])
 
         fitters.append(fitter)
 
@@ -107,7 +107,7 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, log_lambda = default_kwargs['log_lambda'])
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, loglambda = default_kwargs['loglambda'])
                                         # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
                 
                 r_range = modified_logspace(default_kwargs['r_start'], default_kwargs['r_stop'], default_kwargs['r_steps']) 

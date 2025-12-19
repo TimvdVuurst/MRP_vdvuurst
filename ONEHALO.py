@@ -2,19 +2,19 @@ import numpy as np
 import h5py
 from typing import Tuple
 from tqdm import tqdm
-from plotting import format_plot
+from onehalo_plotter import format_plot
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 import os
-from functions import Romberg, modified_logspace
+from functions import *
+from onehalo_plotter import plot_distribution_gaussian_mod
 from json import load, dump
 import emcee
 from corner import corner
-from scipy.special import gammainc
-import warnings
+
 
 #TODO: expand accordingly
-latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'log_lambda':r'$\log_{10}\left(\lambda\right)$'}
+latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
 
 
 class ONEHALO:
@@ -97,103 +97,8 @@ class ONEHALO:
             file.create_dataset('rel_vels', data = masked_data, dtype = np.float32)
 
 
-
-## GENERAL FUNCTIONS 
-
-def mod_gaussian(v, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
-    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
-
-    norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)* np.sqrt(2 * np.pi))
-    vsq = -1 * np.square(v) * 0.5
-    return norm * ((1-lambda_) * np.exp(vsq / sigma1**2) + lambda_ * np.exp(vsq / sigma2**2))
-
-def mod_gaussian_loglambda(v, sigma1, sigma2, lambda_): #for lambda in log scale
-    lambda_10 = 10**lambda_
-    norm = 1 / (((1- lambda_10) * sigma1 + lambda_10 * sigma2)* np.sqrt(2 * np.pi))
-    vsq = -1 * np.square(v) * 0.5
-    return norm * ((1-lambda_10) * np.exp(vsq / sigma1**2) + lambda_10 * np.exp(vsq / sigma2**2))
-
-def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
-    integral, _ = Romberg(x_i, x_f, lambda x: mod_gaussian(x,sigma1,sigma2,lambda_)) 
-    return integral
-    
-def log_prior(theta):
-    sigma_1, sigma_2, lambda_ = theta
-    if sigma_2 < sigma_1 <= 1500. and 1. <= sigma_2 < sigma_1 and 0 <= lambda_ <= 1.:
-        return 0.0
-    return -np.inf
-
-def log_prior_loglambda(theta):
-    sigma_1, sigma_2, lambda_ = theta
-    if sigma_2 < sigma_1 <= 1500. and 1. <= sigma_2 < sigma_1 and -np.inf < lambda_ <= 0.:
-        return 0.0
-    return -np.inf
-
-def mod_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full with prior
-    lp = log_prior(params)
-    if not np.isfinite(lp):
-        return -np.inf
-    sigma1, sigma2, lambda_ = params
-    hist_area = np.sum(bin_heights) 
-    fit_integral = 1.
-    A = hist_area / fit_integral
-    
-    log_L = 0
-    for i in range(1,len(bin_edges)):
-        f_b = A * mod_gaussian_integral(sigma1,sigma2,lambda_,bin_edges[i-1],bin_edges[i])
-        
-        #penalize negative values and zero
-        if f_b <= 0:
-            return 10**11
-        
-        n_b = bin_heights[i-1] #* bin_width
-        log_L += (n_b * np.log(f_b)) - f_b  # herein lies the only difference with neg_log_likelihood
-    
-    return log_L
-
-def mod_gaussian_log_likelihood(params, data, log_lambda): #full with prior
-    prior = log_prior_loglambda if log_lambda else log_prior
-    lp = prior(params)
-    if not np.isfinite(lp):
-        return -np.inf
-
-    mu_func = mod_gaussian_loglambda if log_lambda else mod_gaussian
-    mu_i = mu_func(data, *params)
-    mu_i[mu_i < 0] = 0 # cast negative values to 0, raises errors otherwise
-    return np.sum(np.log(mu_i)) + 1. #+1. for integral
-
-def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
-    sigma1, sigma2, lambda_ = params
-    hist_area = np.sum(bin_heights) 
-    # I do not know where this comes from, integral of mod_gaussian dv from -inf to inf is 1.  
-    # fit_integral = (sigma1 * np.sqrt(2 * np.pi)) *(3*sigma2 + 1 + 105*lambda_) 
-    fit_integral = 1.
-    A = hist_area / fit_integral
-    
-    neg_log_L = 0
-    for i in range(1,len(bin_edges)):
-        f_b = A * mod_gaussian_integral(sigma1,sigma2,lambda_,bin_edges[i-1],bin_edges[i])
-        
-        #penalize negative values and zero
-        if f_b <= 0:
-            return 10**11
-        
-        n_b = bin_heights[i-1] #* bin_width
-        neg_log_L += f_b - (n_b * np.log(f_b))
-    
-    return neg_log_L
-
-def mod_gaussian_neg_log_likelihood(params, data):
-    # "binning" such that each bin contains either 1 or 0 points. Poisson likelihood reduces to this.
-    #Data must be x_i values
-    sigma1, sigma2, lambda_ = params
-    fit_integral = 1. #verified
-
-    return -1 * np.sum(np.log(mod_gaussian(data, sigma1, sigma2, lambda_))) + fit_integral
-     
-
 class ONEHALO_fitter:
-    def __init__(self, PATH: str, initial_param_file: str = None, joint: bool = False, log_lambda: bool = False):
+    def __init__(self, PATH: str, initial_param_file: str = None, joint: bool = False, loglambda: bool = False):
         """_summary_
 
         Args:
@@ -228,7 +133,7 @@ class ONEHALO_fitter:
                                            "c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
             # These values are emprically in the right region. 
             else:
-                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':float(not log_lambda)} # init lambda at 1 if not log, 0 if log
+                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':float(not loglambda)} # init lambda at 1 if not log, 0 if log
 
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
@@ -241,7 +146,7 @@ class ONEHALO_fitter:
     @staticmethod
     def _fit_modified_gaussian_emcee(data, bins, initial_guess: dict, log_likelihood_func, use_binned = False,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
-                                     plot = True, verbose = False, filename = 'Mfit', save_params = False, log_lambda = False, **kwargs):
+                                     plot = True, verbose = False, filename = 'Mfit', save_params = False, loglambda = False, **kwargs):
         
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
@@ -249,14 +154,14 @@ class ONEHALO_fitter:
         #TODO fix noise so that it is redrawn when it lies outside the bounds, not just cast to absolute value or smth
         noise = np.random.randn(nwalkers, ndim)
         noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
-        if log_lambda:
+        if loglambda:
             noise[:, -1] *= -1
         pos = init_guess + noise
 
-        log_lambda_str = '_log_lambda' if log_lambda else ''
+        loglambda_str = '_log_lambda' if loglambda else ''
 
         if not use_binned:
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, log_lambda)) #, moves = emcee.moves.GaussianMove(0.05))
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda)) #, moves = emcee.moves.GaussianMove(0.05))
                                             #  moves=[(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)])
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
@@ -296,16 +201,16 @@ class ONEHALO_fitter:
             
             axes[-1].set_xlabel("Step number")
 
-            plt.savefig(filename + f'_walkers{log_lambda_str}.png', dpi = 200)
+            plt.savefig(filename + f'_walkers{loglambda_str}.png', dpi = 200)
             plt.close()
 
             #corner plot
-            flat_samples = sampler.get_chain(discard=100, thin=15, flat=True) # this is probably fine
+            flat_samples = sampler.get_chain(discard=250, thin=15, flat=True) # this is probably fine
 
             fig = corner(flat_samples, labels = param_labels, quiet = True,
                             quantiles=[0.16, 0.5, 0.84])
 
-            fig.savefig(filename + f"_corner{log_lambda_str}.png", dpi = 200)
+            fig.savefig(filename + f"_corner{loglambda_str}.png", dpi = 200)
             plt.close(fig)
         
         result = np.zeros(ndim)
@@ -331,17 +236,17 @@ class ONEHALO_fitter:
             if not os.path.isdir(os.path.join(param_path, masstail)):
                 os.mkdir(os.path.join(param_path, masstail))
             
-            param_path = os.path.join(param_path, masstail, rtail + f'{log_lambda_str}.json')
+            param_path = os.path.join(param_path, masstail, rtail + f'{loglambda_str}.json')
             
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1)
         
         # Plot if function provided
         if plot:
-            if log_lambda:
-                plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit{log_lambda_str}.png', log_lambda = True)
+            if loglambda:
+                plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
             else:
-                plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit.png', log_lambda = False)
+                plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit.png', loglambda = False)
 
         return param_dict
         # return samples
@@ -501,7 +406,7 @@ class ONEHALO_fitter:
                             bins: int = 200, bounds: list = [(50, 1000), (50, 1000), (0, 1)], plot: bool = True,
                             nwalkers: int = 16, nsteps: int = 1000, non_bin_threshold: int = -1,
                             distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True,
-                            return_values = False, log_lambda = False, **kwargs):
+                            return_values = False, loglambda = False, **kwargs):
         """_summary_
 
         Args:
@@ -581,7 +486,7 @@ class ONEHALO_fitter:
                     likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
                     result, err = self._fit_modified_gaussian_emcee(masked_data, bins, self.initial_param_dict, likelihood_func,
                                                      nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
-                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, log_lambda = log_lambda)
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, loglambda = loglambda)
                     if return_values:
                         return result, err
 
@@ -628,7 +533,7 @@ class ONEHALO_fitter:
                 likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
                 result, err = self._fit_modified_gaussian_emcee(masked_data, bins, self.initial_param_dict, likelihood_func,
                                                      nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
-                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, log_lambda = log_lambda)
+                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, loglambda = loglambda)
                 if return_values:   
                     results[i] = result
                     errors[i] = err
@@ -658,110 +563,6 @@ def plot_all_fits(massbin):
     #scraper of data and params. preferably data that already exists as a catalogue
     pass
 
-def _Gstat(O,E):
-    """G-test statistic.
-
-    Args:
-        O (array): Observed counts. MUST be integers.
-        E (array): Expected counts under the null hypothesis e.g. the model predictions.
-
-    Returns:
-        G (float): The G-statistic value
-    """
-    G = 0
-    for i, Oi in enumerate(O):
-        if Oi == 0:
-            continue
-        G += Oi * np.log(Oi/E[i])
-    return 2*G
-
-def _Qval(x,k):
-    """Find the Q-value aka p-value from a given chi^2 distributed statistic.
-
-    Args:
-        x (float): Statistic value
-        k (int): The degrees of freedom of the problem.
-
-    Returns:
-        Q (float): The Q-value of the statistic given the degrees of freedom.
-    """
-
-    #gammainc in scipy is the *regularized* incomplete lower gamma function so /gamma(k/2) is implicit
-    return 1 - gammainc(k/2,x/2)
-
-def get_Qvalue(param_dict, data, bins = 200, sanitycheck = False):
-    warnings.resetwarnings()
-    bin_heights, bin_edges = np.histogram(data, bins = bins, density=False)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    hist_area=np.sum(bin_heights)
-
-    model = hist_area * np.array([mod_gaussian_integral(param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda'],
-                                                               bin_edges[i], bin_edges[i+1]) for i in range(len(bin_centers))])
-    
-    Gval = _Gstat(bin_heights, model) 
-    if sanitycheck:
-        print(f"{sum(model) = }, {sum(bin_heights) = }")
-        print(f'{Gval = }')
-    #dof = 4 since three parameters and 1 extra less since if N -1 bins are filled we know exactly the Nth bin count
-    warnings.filterwarnings('ignore')
-    return _Qval(Gval, len(bin_heights) - 4)
-
-
-
-#TODO: make this prettier
-def plot_distribution_gaussian_mod(f,param_dict,data,bins,distname, filename = 'Mfit', show = False, log_lambda = False, sanitycheck = False):
-    
-    bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    bin_width= bin_edges[1] - bin_edges[0] 
-    bin_widths = np.diff(bin_edges)  # The width of each bin
-    number_density = bin_heights / bin_widths  # Normalize by bin width
-
-    # Plot the histogram
-    fig = plt.figure(figsize=(7,7))
-    frame=fig.add_subplot(1,1,1)
-    frame.set_xlabel('Velocity difference v', fontsize=16)
-    frame.set_ylabel('Number of galaxies per v', fontsize=16)
-    frame.bar(bin_centers, number_density, width=bin_width, align='center')
-    DAT=np.linspace(np.min(data),np.max(data),1000)
-
-    sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
-    paramstr = ''
-    sig_digits = 4
-    for i,param in enumerate(['sigma_1', 'sigma_2', 'lambda']):
-        if i == 2 and log_lambda:
-            param_latex = 'log_' + param
-            sig_digits = 3
-        else:
-            param_latex = param
-
-        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][0]:.{sig_digits -1}}}}_{{-{param_dict['errors'][i][1]:.{sig_digits -1}}}}$\n'
-    
-    Qval = get_Qvalue(param_dict, data, bins, sanitycheck = False)
-    paramstr += f'Q = {Qval:.3}'
-
-    frame.text(0.155, 0.71, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12.5)
-
-    hist_area=np.sum(bin_heights)
-    frame.plot(DAT,hist_area*f(DAT,sigma1,sigma2,lambda_),'-', label=f"{distname},\nN={hist_area:.0f}",color='red')
-
-    frame.legend(fontsize=12.5, loc="upper right")
-    frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
-
-    if log_lambda:
-        weighted_sigma = np.average([sigma1, sigma2], weights = [1-10**(lambda_), 10**(lambda_)])
-        if sanitycheck:
-            print(f'{4*weighted_sigma = }')
-    else:
-        weighted_sigma = np.average([sigma1, sigma2], weights = [1- lambda_, lambda_])
-
-    frame.set_xlim(-4 * weighted_sigma, 4 * weighted_sigma)
-    
-    if not show:
-        fig.savefig(filename, dpi=200)
-        plt.close()
-    else:
-        plt.show()
 
 
 if __name__ == '__main__':

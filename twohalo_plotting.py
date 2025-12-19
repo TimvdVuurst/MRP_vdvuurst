@@ -1,45 +1,13 @@
+from scipy.stats import skew, kurtosis
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import h5py
-from scipy.stats import skew, kurtosis
 import os
 from tqdm import tqdm
-
-
-def format_plot():
-    # Define some properties for the figures so that they look good
-    SMALL_SIZE = 10 * 2 
-    MEDIUM_SIZE = 12 * 2
-    BIGGER_SIZE = 14 * 2
-
-    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
-    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
-    plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
-    mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
-    mpl.rcParams['ytick.direction'] = 'in'
-    mpl.rcParams['xtick.direction'] = 'in'
-    mpl.rcParams['mathtext.fontset'] = 'cm'
-    mpl.rcParams['font.family'] = 'STIXgeneral'
-
-    mpl.rcParams['figure.dpi'] = 100
-
-    mpl.rcParams['xtick.minor.visible'] = True
-    mpl.rcParams['ytick.minor.visible'] = True
-    mpl.rcParams['xtick.top'] = True
-    mpl.rcParams['ytick.right'] = True
-
-    mpl.rcParams['xtick.major.size'] = 10
-    mpl.rcParams['ytick.major.size'] = 10
-    mpl.rcParams['xtick.minor.size'] = 4
-    mpl.rcParams['ytick.minor.size'] = 4
-
-    mpl.rcParams['xtick.major.width'] = 1.25
-    mpl.rcParams['ytick.major.width'] = 1.25
-    mpl.rcParams['xtick.minor.width'] = 1
-    mpl.rcParams['ytick.minor.width'] = 1
+import argparse
+from functions import *
+from json import load
 
 class TwoHaloPlotter:
     def __init__(self, path: str):
@@ -175,32 +143,3 @@ class TwoHaloPlotter:
         plt.close()
 
 
-
-
-def plot_onehalo_hist(data, number_of_bins = 20, savefig = True, showfig = False, filename = None):
-    fig,ax = plt.subplots(figsize = (8,12))
-    pass
-
-
-if __name__ == '__main__':
-    dir = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
-    
-    format_plot() #make plots pretty
-
-    for file in tqdm(reversed(sorted(os.listdir(dir)))): #high mass bins first since they're quick
-        datapath = os.path.join(dir,file)
-
-        
-        info = datapath.split('_')
-        mass_range_primary = np.array(info[-3].split('-')).astype(np.float32)
-        mass_range_secondary = np.array(info[-1].split('.hdf5')[0].split('-')).astype(np.float32)
-        # plotname =  f"/disks/cosmodm/vdvuurst/figures/vel_hist_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
-        plotname =  f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{mass_range_primary[0]}-{mass_range_primary[1]}_M2_{mass_range_secondary[0]}-{mass_range_secondary[1]}"+".png"
-        
-        # if os.path.isfile(plotname): #no overwriting
-        #     continue
-
-        plotter = TwoHaloPlotter(datapath)
-        # plotter.plot_velocity_histograms()
-        plotter.plot_moments(filename = plotname)
-        
