@@ -5,7 +5,7 @@ from onehalo_plotter import format_plot
 import argparse
 from tqdm import tqdm
 from multiprocessing import Pool
-from functions import modified_logspace
+from functions import modified_logspace, rice_bins
 
 import warnings
 
@@ -24,15 +24,18 @@ SOAP_PATH_DEFAULT = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOA
 parser = argparse.ArgumentParser()
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
 parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') #always EXCLUSIVE upper bound
+parser.add_argument('-r1','--lower_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!')
+parser.add_argument('-r2','--upper_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!') 
 parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Size of bins in dex. Defaults to 0.5.')
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
-parser.add_argument('-B', '--bins', type = int, default = 500, help = 'Number of velocity bins')
+# parser.add_argument('-B', '--bins', type = int, default = 500, help = 'Number of velocity bins')
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
 parser.add_argument('-NS', '--num_steps', type = int, default = 1500, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
 parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
+parser.add_argument('-FL', '--fix_lambda', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0. Default is 0.')
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
@@ -50,20 +53,34 @@ multiprocess = bool(args.multiprocess) and len(mass_bins) > 1 #if we have only 1
 verbose = bool(args.verbose) and not multiprocess # set verbose to false during multiprocess
 loglambda = bool(args.loglambda)
 catalogued = bool(args.catalogued)
+fix_lambda = bool(args.fix_lambda)
 
 def create_kwargs(**kwargs):
     return kwargs
 
+if args.lower_radius and args.upper_radius:
+    lr = float(args.lower_radius)
+    ur = float(args.upper_radius)
+    create_range = False
+else:
+    lr = 0.
+    ur = 5.
+    create_range = True
+
 #NOTE: hardcoded r_start, r_stop and r_steps with this, might make modifiable later
-default_kwargs = create_kwargs(r_start= 0., r_stop = 5., r_steps = 18, bins= 200, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
+default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = 18, bins= rice_bins, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
-                            return_values = False, loglambda = loglambda)
+                            return_values = False, loglambda = loglambda, fix_lambda = fix_lambda)
 
 
 def _create_iterable_input(**kwargs):
     fitters = []
-    r_range = modified_logspace(kwargs['r_start'], kwargs['r_stop'], kwargs['r_steps']) 
+    if create_range:
+        r_range = modified_logspace(kwargs['r_start'], kwargs['r_stop'], kwargs['r_steps']) 
+    else:
+        r_range(kwargs['r_start'], kwargs['r_stop'])
+    
     kwargs['rbins'] = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)])
 
     for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
@@ -95,7 +112,6 @@ if multiprocess:
         for _ in p.imap_unordered(_run_experiment_radial_bins, iterable_input):
             pbar.update()
 
-
 else:
     match args.method.lower():
         case 'emcee':
@@ -110,7 +126,10 @@ else:
                 fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, loglambda = default_kwargs['loglambda'])
                                         # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
                 
-                r_range = modified_logspace(default_kwargs['r_start'], default_kwargs['r_stop'], default_kwargs['r_steps']) 
+                if create_range:
+                    r_range = modified_logspace(default_kwargs['r_start'], default_kwargs['r_stop'], default_kwargs['r_steps']) 
+                else:
+                    r_range = np.array([default_kwargs['r_start'], default_kwargs['r_stop']])
                 default_kwargs['rbins'] = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)])
                 mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
 
