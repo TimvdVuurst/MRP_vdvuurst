@@ -137,8 +137,8 @@ def mod_gaussian_log_likelihood(params, data, loglambda, fix_lambda): #full with
 
     mu_func = mod_gaussian_loglambda if loglambda else mod_gaussian
     mu_i = mu_func(data, *params)
-    mu_i[mu_i < 0] = 0 # cast negative values to 0, raises errors otherwise
-    return np.sum(np.log(mu_i)) + 1. #+1. for integral
+    mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise
+    return np.sum(np.log10(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
 
 def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
     sigma1, sigma2, lambda_ = params
@@ -265,7 +265,7 @@ def perturb_around_likelihood(L: float, params: np.array, log_likelihood_func: C
 
         param_dict['errors'][0] = [np.abs(params[0] - param_down), np.abs(params[0] - param_up)] # errors are the parameter differences
         param_dict['errors'][1] = [np.abs(params[1] - GLOBAL_PRIOR_RANGE[1][0]), np.abs(params[1] - GLOBAL_PRIOR_RANGE[1][1])] # sigma_2 over entire prior range
-        param_dict['errors'][-1] = [0.,0.] #fix lambda at 0 with no error
+        param_dict['errors'][-1] = [0.,0.] # fix lambda at 0 with no error
         
         return param_dict
 
@@ -285,6 +285,7 @@ def _perturb_param(params: np.array, param_idx: int, step: float, L: float, L_th
         float: parameter value at the likelihood threshold
     """
     L_current = L
+    L_best = L
     perturbed_params = np.copy(params)
 
     prior_ranges = GLOBAL_PRIOR_RANGE.copy() #TODO?: not suited for loglambda now
@@ -303,6 +304,11 @@ def _perturb_param(params: np.array, param_idx: int, step: float, L: float, L_th
         # Step parameter
         perturbed_params[param_idx] += dir * step
         L_current = log_likelihood_func(perturbed_params)
+
+        # # It might be that we step further into a minimum, in that case update the likelihood and parameter values accordingly
+        # if L_current < L_best:
+        #     L_best = L_current
+        #     params = np.copy(perturbed_params)
         
         if not np.isfinite(L_current):
             # Assume the previous step was the best we could get within prior range

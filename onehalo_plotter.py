@@ -46,7 +46,7 @@ def format_plot():
     mpl.rcParams['ytick.minor.width'] = 1
 
 
-def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Modified Gaussian', filename = 'Mfit', show = False, loglambda = False, fix_lambda = False, sanitycheck = False):
+def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Double Gaussian', filename = 'Mfit', show = False, loglambda = False, fix_lambda = False, sanitycheck = False):
     sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
     # print(f'LOOK: {sigma1 = }, {sigma2 = }, {lambda_ =}')
     # Set plot appeareance

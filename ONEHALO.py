@@ -11,6 +11,7 @@ from onehalo_plotter import plot_distribution_gaussian_mod
 from json import load, dump
 import emcee
 from corner import corner
+from shrinking_gaussian_move import ShrinkingGaussianMove
 
 
 #TODO: expand accordingly
@@ -152,11 +153,19 @@ class ONEHALO_fitter:
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
         ndim = init_guess.shape[0]
         #TODO fix noise so that it is redrawn when it lies outside the bounds, not just cast to absolute value or smth
-        noise = np.random.randn(nwalkers, ndim)
-        noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
-        if loglambda:
-            noise[:, -1] *= -1
-        pos = init_guess + noise
+
+        random_pos = True
+        if not random_pos:
+
+            noise = np.random.randn(nwalkers, ndim)
+            noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
+            if loglambda:
+                noise[:, -1] *= -1
+            pos = init_guess + noise
+
+        else:
+            # uniformly random starting positions
+            pos = np.random.uniform(low = [1., 1., 0.], high = [1500., 1500., 0.5], size = (nwalkers, ndim))
 
         loglambda_str = '_log_lambda' if loglambda else ''
         # lambda_str = loglambda_str + fix_lambda_str
@@ -166,8 +175,11 @@ class ONEHALO_fitter:
             bins = bins(data.size)
 
         if not use_binned:
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['fix_lambda'])) #, moves = emcee.moves.GaussianMove(0.05))
-                                            #  moves=[(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)])
+            cov = np.array([0.1,0.1,0.001]) #TODO: make a covariance matrix (diagonal is fine) for the parameters - this decides the stepsize NOT RELATIVE!!
+            # sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['fix_lambda']),
+                                            # moves = ShrinkingGaussianMove(cov, nsteps, 100)) 
+                                            # moves = emcee.moves.GaussianMove(cov))
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['fix_lambda']))
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
         else:
@@ -254,6 +266,7 @@ class ONEHALO_fitter:
         # Add some more diagnostics to the dictionaries
         param_dict['nwalkers'] = nwalkers
         param_dict['nsteps'] = nsteps
+        param_dict['likelihood'] = best_likelihood
 
         if save_params:
             head, rtail = os.path.split(filename)
@@ -267,7 +280,8 @@ class ONEHALO_fitter:
             if not os.path.isdir(os.path.join(param_path, masstail)):
                 os.mkdir(os.path.join(param_path, masstail))
             
-            param_path = os.path.join(param_path, masstail, rtail + f'{loglambda_str}.json')
+            fix_lambda_str = '' if not kwargs['fix_lambda'] else '_single_gaussian'
+            param_path = os.path.join(param_path, masstail, rtail + f'{loglambda_str}{fix_lambda_str}.json')
             
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1)
@@ -276,20 +290,20 @@ class ONEHALO_fitter:
         if plot:
             if loglambda:
                 if not kwargs['fix_lambda']: 
-                    plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
+                    plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
                 else: 
                     plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
             else:
                 if not kwargs['fix_lambda']: 
-                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Modified Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
+                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
                 else: 
-                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
+                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, fix_lambda = True)
         return param_dict
         # return samples
 
     @staticmethod
     def _fit_modified_gaussian_minimize(data, bins, initial_guess,bounds, neg_log_likelihood_func,
-                              plot: bool = False, distname = 'Modified Gaussian', use_binned = True,
+                              plot: bool = False, distname = 'Double Gaussian', use_binned = True,
                               verbose = False, filename = 'Mfit', save_params = False):
         """
         Fits a modified Gaussian distribution using minimize (scipy.optimize) to binned data and plots the result.
@@ -362,7 +376,7 @@ class ONEHALO_fitter:
     # Standard values taken from Sowmya's code
     def fit_to_data(self, method: str, bins: int = 200, bounds: list = [(0.01, None), (0.0001, None), (-0.09, 1)],
                      plot: bool = True, nwalkers: int = 8, nsteps: int = 1000, non_bin_threshold: int = -1,
-                     distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, **kwargs):
+                     distname: str = 'Double Gaussian', verbose: bool = False, save_params: bool = False, **kwargs):
         
         method = method.lower()
         allowed = ['emcee','minimize']
@@ -452,7 +466,7 @@ class ONEHALO_fitter:
     def _fit_to_non_catalogued_radial_bins(self, method:str, rbins = None, r_start: float = 0., r_stop:float = 5., r_steps: int = 18, 
                             bins: int | Callable = 200, bounds: list = [(50, 1000), (50, 1000), (0, 1)], plot: bool = True,
                             nwalkers: int = 16, nsteps: int = 1000, non_bin_threshold: int = -1,
-                            distname: str = 'Modified Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True,
+                            distname: str = 'Double Gaussian', verbose: bool = False, save_params: bool = False, overwrite: bool = True,
                             return_values = False, loglambda = False, **kwargs):
         """_summary_
 
@@ -469,7 +483,7 @@ class ONEHALO_fitter:
             nwalkers (int, optional): _description_. Defaults to 8.
             nsteps (int, optional): _description_. Defaults to 500.
             non_bin_threshold (int, optional): _description_. Defaults to 1000.
-            distname (str, optional): _description_. Defaults to 'Modified Gaussian'.
+            distname (str, optional): _description_. Defaults to 'Double Gaussian'.
             verbose (bool, optional): _description_. Defaults to False.
             save_params (bool, optional): _description_. Defaults to False.
 
@@ -632,7 +646,7 @@ if __name__ == '__main__':
         param_vals = np.array([param_dict[x] for x in ['sigma_1','sigma_2','lambda']])
 
         ONEHALO_fitter.plot_distribution_gaussian_mod(ONEHALO_fitter.mod_gaussian, param_vals, fitter.rel_vels,
-                                                       bins = 70, distname = 'Modified Gaussian',
+                                                       bins = 70, distname = 'Double Gaussian',
                                                         filename = os.path.join(savepath, f'{param_tail}_fit.png'))
 
 

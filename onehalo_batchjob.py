@@ -35,7 +35,7 @@ parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Nu
 parser.add_argument('-NS', '--num_steps', type = int, default = 1500, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
 parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
-parser.add_argument('-FL', '--fix_lambda', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0. Default is 0.')
+parser.add_argument('-FL', '--fix_lambda', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0 to emulate a single Gaussian. Default is 0.')
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
