@@ -209,7 +209,7 @@ class ONEHALO_fitter:
                 ax.set_ylim(ymin, ymax)
 
             likelihoods = sampler.get_log_prob()
-            best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape) #doublecheck if max or min
+            best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape) # we want the MAXIMUM likelihood here, not the minimum negative likelihood (which would be equivalent)
             best_likelihood = likelihoods[*best_arg]
             best_params = np.array([samples[*best_arg, i] for i in range(ndim)])
   
@@ -263,9 +263,11 @@ class ONEHALO_fitter:
 
         # Perturb the best found parameter set for an error estimate
         param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['fix_lambda']), fix_lambda = kwargs['fix_lambda'])
-        # Add some more diagnostics to the dictionaries
+        
+        # Add some more diagnostics to the dictionaries for later use and ease
         param_dict['nwalkers'] = nwalkers
         param_dict['nsteps'] = nsteps
+        param_dict['N'] = data.size
         param_dict['likelihood'] = best_likelihood
 
         if save_params:

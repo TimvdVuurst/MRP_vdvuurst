@@ -138,7 +138,7 @@ def mod_gaussian_log_likelihood(params, data, loglambda, fix_lambda): #full with
     mu_func = mod_gaussian_loglambda if loglambda else mod_gaussian
     mu_i = mu_func(data, *params)
     mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise
-    return np.sum(np.log10(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
+    return np.sum(np.log(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
 
 def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
     sigma1, sigma2, lambda_ = params
@@ -342,4 +342,6 @@ def _perturb_param(params: np.array, param_idx: int, step: float, L: float, L_th
 
 
 
-
+def BIC(L, n, k = 3):
+    #L is assumed already as a logarithm and as a MAXIMUM
+    return (k * np.log(n)) - 2 * L
