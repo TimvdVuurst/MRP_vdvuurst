@@ -9,6 +9,41 @@ import argparse
 from functions import *
 from json import load
 
+def format_plot():
+    # Define some properties for the figures so that they look good
+    SMALL_SIZE = 10 * 2 
+    MEDIUM_SIZE = 12 * 2
+    BIGGER_SIZE = 14 * 2
+
+    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
+    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
+    plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
+    mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
+    mpl.rcParams['ytick.direction'] = 'in'
+    mpl.rcParams['xtick.direction'] = 'in'
+    mpl.rcParams['mathtext.fontset'] = 'cm'
+    mpl.rcParams['font.family'] = 'STIXgeneral'
+
+    mpl.rcParams['figure.dpi'] = 100
+
+    mpl.rcParams['xtick.minor.visible'] = True
+    mpl.rcParams['ytick.minor.visible'] = True
+    mpl.rcParams['xtick.top'] = True
+    mpl.rcParams['ytick.right'] = True
+
+    mpl.rcParams['xtick.major.size'] = 10
+    mpl.rcParams['ytick.major.size'] = 10
+    mpl.rcParams['xtick.minor.size'] = 4
+    mpl.rcParams['ytick.minor.size'] = 4
+
+    mpl.rcParams['xtick.major.width'] = 1.25
+    mpl.rcParams['ytick.major.width'] = 1.25
+    mpl.rcParams['xtick.minor.width'] = 1
+    mpl.rcParams['ytick.minor.width'] = 1
+
+
 class TwoHaloPlotter:
     def __init__(self, path: str):
         with h5py.File(path,'r') as file:
@@ -48,7 +83,7 @@ class TwoHaloPlotter:
             if len(bin_velocities) == 0:
                 continue
 
-            ax.hist(bin_velocities, bins=50, alpha=0.75, color='b', edgecolor='black')
+            ax.hist(bin_velocities, bins=rice_bins(bin_velocities.size), alpha=0.75, color='b', edgecolor='black')
             # ax.ticklabel_format(useOffset=False, style='plain') # no scientific notation
 
         # No clue what this does yet
@@ -143,3 +178,12 @@ class TwoHaloPlotter:
         plt.close()
 
 
+
+if __name__ == '__main__':
+    format_plot()
+    root = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
+    for file in tqdm(os.listdir(root)):
+        filepath = os.path.join(root, file)
+
+        plotter = TwoHaloPlotter(filepath)
+        plotter.plot_velocity_histograms()

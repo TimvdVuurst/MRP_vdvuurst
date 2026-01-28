@@ -8,39 +8,6 @@ import matplotlib.pyplot as plt
 from scipy.stats import skew, kurtosis
 from subsample import *
 
-def format_plot():
-    # Define some properties for the figures so that they look good
-    SMALL_SIZE = 10 * 2 
-    MEDIUM_SIZE = 12 * 2
-    BIGGER_SIZE = 14 * 2
-
-    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
-    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
-    plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
-    mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
-    mpl.rcParams['ytick.direction'] = 'in'
-    mpl.rcParams['xtick.direction'] = 'in'
-    mpl.rcParams['mathtext.fontset'] = 'cm'
-    mpl.rcParams['font.family'] = 'STIXgeneral'
-
-    mpl.rcParams['figure.dpi'] = 100
-
-    mpl.rcParams['xtick.minor.visible'] = True
-    mpl.rcParams['ytick.minor.visible'] = True
-    mpl.rcParams['xtick.top'] = True
-    mpl.rcParams['ytick.right'] = True
-
-    mpl.rcParams['xtick.major.size'] = 10
-    mpl.rcParams['ytick.major.size'] = 10
-    mpl.rcParams['xtick.minor.size'] = 4
-    mpl.rcParams['ytick.minor.size'] = 4
-
-    mpl.rcParams['xtick.major.width'] = 1.25
-    mpl.rcParams['ytick.major.width'] = 1.25
-    mpl.rcParams['xtick.minor.width'] = 1
-    mpl.rcParams['ytick.minor.width'] = 1
 
 def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
     return (10**m_min <= mass) & (mass <= 10**m_max) # base 10 since FOF masses aren't in units of 10^10 Msol

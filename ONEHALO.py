@@ -164,7 +164,7 @@ class ONEHALO_fitter:
             pos = init_guess + noise
 
         else:
-            # uniformly random starting positions
+            # uniformly random starting positions in the prior range
             pos = np.random.uniform(low = [1., 1., 0.], high = [1500., 1500., 0.5], size = (nwalkers, ndim))
 
         loglambda_str = '_log_lambda' if loglambda else ''
@@ -175,10 +175,7 @@ class ONEHALO_fitter:
             bins = bins(data.size)
 
         if not use_binned:
-            cov = np.array([0.1,0.1,0.001]) #TODO: make a covariance matrix (diagonal is fine) for the parameters - this decides the stepsize NOT RELATIVE!!
-            # sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['fix_lambda']),
-                                            # moves = ShrinkingGaussianMove(cov, nsteps, 100)) 
-                                            # moves = emcee.moves.GaussianMove(cov))
+          
             sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['fix_lambda']))
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
