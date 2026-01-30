@@ -35,7 +35,7 @@ parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Nu
 parser.add_argument('-NS', '--num_steps', type = int, default = 1500, help = 'Number of walker steps passed to emcee.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
 parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
-parser.add_argument('-FL', '--fix_lambda', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0 to emulate a single Gaussian. Default is 0.')
+parser.add_argument('-SG', '--single_gauss', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0 to emulate a single Gaussian. Default is 0.')
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
@@ -53,7 +53,7 @@ multiprocess = bool(args.multiprocess) and len(mass_bins) > 1 #if we have only 1
 verbose = bool(args.verbose) and not multiprocess # set verbose to false during multiprocess
 loglambda = bool(args.loglambda)
 catalogued = bool(args.catalogued)
-fix_lambda = bool(args.fix_lambda)
+single_gauss = bool(args.single_gauss)
 
 def create_kwargs(**kwargs):
     return kwargs
@@ -71,7 +71,7 @@ else:
 default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = 18, bins= rice_bins, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
-                            return_values = False, loglambda = loglambda, fix_lambda = fix_lambda)
+                            return_values = False, loglambda = loglambda, single_gauss = single_gauss)
 
 
 def _create_iterable_input(**kwargs):

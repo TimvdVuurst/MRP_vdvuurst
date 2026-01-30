@@ -113,8 +113,10 @@ class ONEHALO_fitter:
         massbin = os.path.split(self.PATH)[-1].split('_')[-1].split('.hdf5')[0].split('-')
         self.lower_mass, self.upper_mass = np.float32(massbin[0]), np.float32(massbin[1])
 
+        self.joint = joint
+
         if initial_param_file:
-            if joint:
+            if self.joint:
                 with open(initial_param_file, 'r') as f:
                     self.initial_param_dict = load(f)[f'M_{self.lower_mass}-{self.upper_mass}']
                     #TODO: same as below presumably, with removing errors
@@ -124,15 +126,14 @@ class ONEHALO_fitter:
                 #NOTE: some dicts are bigger, we want only the param data, we dont care about error values
                 self.initial_param_dict = {"sigma_1": self.initial_param_dict['sigma_1'],
                                             "sigma_2": self.initial_param_dict['sigma_2'], 
-                                            #   "lambda":np.random.normal(self.initial_param_dict['lambda'], 0.25)}
-                                            "lambda": 0.5} # start lambda in the middle of its prior space
+                                            "lambda": 0.} 
 
         else:
             # some random stuff in the ballpark of where we want them to kickstart
-            if joint:
-                self.initial_param_dict = {"p": -227.7,"n": 0.22,"q": 37.6,"b": 396.4,"m": 7.8,
-                                           "c": 70.9,"A": 0.69,"B": 20,"C": -0.005}
-            # These values are nice to jumpstart the process across mass and radial bins
+            if self.joint:
+                # this will not work with an ensemble of function combinations
+                raise ValueError("No initial parameter file specified.")
+            # These values are ok to jumpstart the process across mass and radial bins
             else:
                 self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':0 if not loglambda else -100} 
 
@@ -152,9 +153,8 @@ class ONEHALO_fitter:
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
         ndim = init_guess.shape[0]
-        #TODO fix noise so that it is redrawn when it lies outside the bounds, not just cast to absolute value or smth
 
-        random_pos = True
+        random_pos = True #TODO: change to be modifiable from terminal 
         if not random_pos:
 
             noise = np.random.randn(nwalkers, ndim)
@@ -168,29 +168,29 @@ class ONEHALO_fitter:
             pos = np.random.uniform(low = [1., 1., 0.], high = [1500., 1500., 0.5], size = (nwalkers, ndim))
 
         loglambda_str = '_log_lambda' if loglambda else ''
-        # lambda_str = loglambda_str + fix_lambda_str
 
         # If bins is passed as a function (e.g. ricebins in functions.py), calculate the amount of bins
         if hasattr(bins, '__call__'):
             bins = bins(data.size)
 
         if not use_binned:
-          
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['fix_lambda']))
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['single_gauss']))
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
         else:
             # Compute histogram
             bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (bin_edges, bin_heights))#, moves = emcee.moves.GaussianMove(0.05))
-                                            # moves=[(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)])
-            
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (bin_edges, bin_heights))
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
         burnin = 250 # does not matter so much
 
         if plot:
             # chain plots
+            # if ndim > 3:
+            #     nrows = np.ceil(ndim / 2)
+            # TODO: with joint there's gonna be a lot of parameters which may clutter a walker plot if they are all plotted
+            # vertically
             fig, axes = plt.subplots(ndim + 1, figsize=(12, 10), sharex=True)
             samples = sampler.get_chain()
 
@@ -206,7 +206,8 @@ class ONEHALO_fitter:
                 ax.set_ylim(ymin, ymax)
 
             likelihoods = sampler.get_log_prob()
-            best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape) # we want the MAXIMUM likelihood here, not the minimum negative likelihood (which would be equivalent)
+            # we want the MAXIMUM likelihood here, not the minimum negative likelihood (which would be equivalent)
+            best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape) 
             best_likelihood = likelihoods[*best_arg]
             best_params = np.array([samples[*best_arg, i] for i in range(ndim)])
   
@@ -215,9 +216,6 @@ class ONEHALO_fitter:
 
             axes[-1].plot(likelihoods_plot, alpha = 0.3)
             axes[-1].set(ylabel = r'$\log\left(-\log(\mathcal{L})\right)$')
-            # axes[-1].yaxis.set_label_coords(-0.15, 0.5)
-            # axes[-1].ticklabel_format(useOffset = True)
-            # axes[-1].set_yscale('log')
             axes[-1].set_xlabel("Step number")
 
             ymin, ymax = axes[-1].get_ylim()
@@ -228,7 +226,7 @@ class ONEHALO_fitter:
             plt.close()
 
             #corner plot
-            if not kwargs['fix_lambda']:
+            if not kwargs['single_gauss']:
                 flat_samples = sampler.get_chain(discard=burnin, thin=15, flat=True) # this is probably fine
 
                 fig = corner(flat_samples, labels = param_labels, quiet = True,
@@ -258,8 +256,10 @@ class ONEHALO_fitter:
         # param_dict = dict(zip(param_names, result.tolist()))
         # param_dict['errors'] = errs.tolist()
 
+
+        #TODO: change to short MCMC chain?
         # Perturb the best found parameter set for an error estimate
-        param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['fix_lambda']), fix_lambda = kwargs['fix_lambda'])
+        param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), single_gauss = kwargs['single_gauss'])
         
         # Add some more diagnostics to the dictionaries for later use and ease
         param_dict['nwalkers'] = nwalkers
@@ -269,7 +269,7 @@ class ONEHALO_fitter:
 
         if save_params:
             head, rtail = os.path.split(filename)
-            if not kwargs['fix_lambda']:
+            if not kwargs['single_gauss']:
                 masstail = os.path.split(head)[1]
             else:
                 head = os.path.split(head)[0]
@@ -279,8 +279,8 @@ class ONEHALO_fitter:
             if not os.path.isdir(os.path.join(param_path, masstail)):
                 os.mkdir(os.path.join(param_path, masstail))
             
-            fix_lambda_str = '' if not kwargs['fix_lambda'] else '_single_gaussian'
-            param_path = os.path.join(param_path, masstail, rtail + f'{loglambda_str}{fix_lambda_str}.json')
+            single_gauss_str = '' if not kwargs['single_gauss'] else '_single_gaussian'
+            param_path = os.path.join(param_path, masstail, rtail + f'{loglambda_str}{single_gauss_str}.json')
             
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1)
@@ -288,15 +288,15 @@ class ONEHALO_fitter:
         # Plot if function provided
         if plot:
             if loglambda:
-                if not kwargs['fix_lambda']: 
+                if not kwargs['single_gauss']: 
                     plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
                 else: 
                     plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
             else:
-                if not kwargs['fix_lambda']: 
+                if not kwargs['single_gauss']: 
                     plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
                 else: 
-                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, fix_lambda = True)
+                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
         return param_dict
         # return samples
 
@@ -426,7 +426,7 @@ class ONEHALO_fitter:
                 continue
 
             filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}'
-            if kwargs['fix_lambda']:
+            if kwargs['single_gauss']:
                 filename += f'/single_gaussian'
                 if not os.path.isdir(filename):
                     os.mkdir(filename)

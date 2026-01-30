@@ -46,7 +46,7 @@ def format_plot():
     mpl.rcParams['ytick.minor.width'] = 1
 
 
-def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Double Gaussian', filename = 'Mfit', show = False, loglambda = False, fix_lambda = False, sanitycheck = False):
+def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Double Gaussian', filename = 'Mfit', show = False, loglambda = False, single_gauss = False, sanitycheck = False):
     sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
     # print(f'LOOK: {sigma1 = }, {sigma2 = }, {lambda_ =}')
     # Set plot appeareance
@@ -79,7 +79,7 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
     # Creating textbox for parameter values
     paramstr = ''
     sig_digits = 4
-    if not fix_lambda:
+    if not single_gauss:
         for i,param in enumerate(['sigma_1', 'sigma_2', 'lambda']):
             if i == 2 and loglambda:
                 param_latex = 'log' + param
@@ -102,7 +102,7 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
     #Update textbox w/ G statistic and plot
     # paramstr += f'Q = {Qval:.3}'
     paramstr += f'G = {Gval:.1f}'
-    if not fix_lambda:
+    if not single_gauss:
         frame.text(0.155, 0.71, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
     else:
         frame.text(0.155, 0.78, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
@@ -120,18 +120,18 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
     else:
         plt.show()
 
-def _get_data_and_plot(func, mass_bin, r_bin, loglambda, fix_lambda, show = False,
+def _get_data_and_plot(func, mass_bin, r_bin, loglambda, single_gauss, show = False,
                        param_path_base = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/emcee',
                        data_path_base = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex',
                        plot_path_base = '/disks/cosmodm/vdvuurst/figures/emcee_results_radial_bins'):
     
     loglambda_str = '_log_lambda' if loglambda else ''
-    fixlambda_str = '_fix_lambda' if fix_lambda else ''
+    fixlambda_str = '_single_gauss' if single_gauss else ''
 
     param_path = param_path_base + f'/M_{mass_bin[0]}-{mass_bin[1]}/r_{r_bin[0]:.2f}-{r_bin[1]:.2f}{loglambda_str}{fixlambda_str}.json'
     data_path = data_path_base + f'/M_{mass_bin[0]}-{mass_bin[1]}/r_{r_bin[0]:.2f}-{r_bin[1]:.2f}.hdf5'
 
-    if not fix_lambda:
+    if not single_gauss:
         plot_path = plot_path_base + f'/M_{mass_bin[0]}-{mass_bin[1]}/r_{r_bin[0]:.2f}-{r_bin[1]:.2f}_fit{loglambda_str}.png'
     else:
         plot_path = plot_path_base + f'/M_{mass_bin[0]}-{mass_bin[1]}/single_gaussian/r_{r_bin[0]:.2f}-{r_bin[1]:.2f}_fit{loglambda_str}.png'
@@ -145,11 +145,11 @@ def _get_data_and_plot(func, mass_bin, r_bin, loglambda, fix_lambda, show = Fals
     except FileNotFoundError as e:
         return True, e
   
-    plot_distribution_gaussian_mod(func, param_dict, data, rice_bins(data.size), show = show, loglambda = loglambda, fix_lambda = fix_lambda, filename = plot_path)
+    plot_distribution_gaussian_mod(func, param_dict, data, rice_bins(data.size), show = show, loglambda = loglambda, single_gauss = single_gauss, filename = plot_path)
 
     return False, 'Nothing went wrong'
 
-def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = False, fix_lambda = False, verbose = False):
+def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = False, single_gauss = False, verbose = False):
     if not mass_bins:
         mass_range = np.arange(12.0, 15.5 + 0.5, 0.5).astype(np.float32)
         mass_bins = np.array([[mass_range[i],mass_range[i+1]] for i in range(len(mass_range)-1)])
@@ -162,7 +162,7 @@ def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = 
     
     if np.size(mass_bins) == 2: # just one massbin
         if np.size(r_bins) == 2: # just one rbin
-            failed, msg = _get_data_and_plot(func, mass_bins, r_bins, loglambda, fix_lambda, show)
+            failed, msg = _get_data_and_plot(func, mass_bins, r_bins, loglambda, single_gauss, show)
             if failed:
                 print(f'Code failed: {msg}')
                 return
@@ -170,7 +170,7 @@ def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = 
         else: #all rbins
             iterable = tqdm(r_bins) if verbose else r_bins
             for r_bin in iterable:
-                failed, msg = _get_data_and_plot(func, mass_bins, r_bin, loglambda, fix_lambda, show)
+                failed, msg = _get_data_and_plot(func, mass_bins, r_bin, loglambda, single_gauss, show)
                 if failed:
                     print(f'Code failed: {msg}')
                     return # higher r_bins will also not exist
@@ -179,7 +179,7 @@ def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = 
         if np.size(r_bins) == 2:
             iterable = tqdm(mass_bins) if verbose else mass_bins
             for mass_bin in iterable:
-                failed, msg = _get_data_and_plot(func, mass_bin, r_bins, loglambda, fix_lambda, show)
+                failed, msg = _get_data_and_plot(func, mass_bin, r_bins, loglambda, single_gauss, show)
                 if failed:
                     print(f'Code failed: {msg}')
                     continue
@@ -187,7 +187,7 @@ def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = 
             iterable = tqdm(mass_bins) if verbose else mass_bins
             for mass_bin in iterable:
                 for r_bin in r_bins:
-                    failed, msg = _get_data_and_plot(func, mass_bin, r_bin, loglambda, fix_lambda, show)
+                    failed, msg = _get_data_and_plot(func, mass_bin, r_bin, loglambda, single_gauss, show)
                     if failed:
                         break # higher r-bins will not exist so continue to next mass_bin
 
@@ -202,7 +202,7 @@ if __name__ == '__main__':
     parser.add_argument('-r1','--lower_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!')
     parser.add_argument('-r2','--upper_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!') 
     parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Has alternate filename structure. Default is 0.')
-    parser.add_argument('-FL', '--fix_lambda', type = int, default = 0, help = 'Fixes lambda to 0 to emulate a single Gaussian. Has alternate filename structure. Default is 0.')
+    parser.add_argument('-FL', '--single_gauss', type = int, default = 0, help = 'Fixes lambda to 0 to emulate a single Gaussian. Has alternate filename structure. Default is 0.')
     parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Controls whether to show progress bars. Default is True')
 
     args = parser.parse_args()
@@ -223,7 +223,7 @@ if __name__ == '__main__':
     else:
         r_bin = None
     
-    plot_onehalo_fit(mass_bin, r_bin, loglambda = bool(args.loglambda), fix_lambda = bool(args.fix_lambda),
+    plot_onehalo_fit(mass_bin, r_bin, loglambda = bool(args.loglambda), single_gauss = bool(args.single_gauss),
                      show = False, # if calling from terminal we want to save the plots, not show them
                      verbose = bool(args.verbose)
                      )
