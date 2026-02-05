@@ -5,7 +5,7 @@ from onehalo_plotter import format_plot
 import argparse
 from tqdm import tqdm
 from multiprocessing import Pool
-from functions import modified_logspace, rice_bins
+from functions import modified_logspace, rice_bins, mkdir_if_non_existent
 
 import warnings
 
@@ -23,10 +23,16 @@ SOAP_PATH_DEFAULT = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOA
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
-parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') #always EXCLUSIVE upper bound
+parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') 
+parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Size of mass bins in dex. Defaults to 0.5.')
+
+
 parser.add_argument('-r1','--lower_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!')
 parser.add_argument('-r2','--upper_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!') 
-parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Size of bins in dex. Defaults to 0.5.')
+parser.add_argument('-RB','--r_bins', type = int, default = 20, help = 'Numer of radial bins to use. Defaults to 20.') 
+parser.add_argument('-RU', '--rad_unit', type = str, default = 'rvir', choices = ['rvir', 'mpc', 'Mpc', 'Rvir'], help = 'Unit to use for radial bins. Either Mpc or Rvir (i.e. R200m), not case sensitive in the first letter.')
+
+
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
 # parser.add_argument('-B', '--bins', type = int, default = 500, help = 'Number of velocity bins')
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
@@ -39,13 +45,16 @@ parser.add_argument('-SG', '--single_gauss', type = int, default = 0, help = 'Ha
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
+
+r_unit = args.rad_unit
+r_unit = r_unit[0].upper() + r_unit[1:].lower() #typeset for consistency
+
 mass_range = np.arange(args.lower_mass, args.upper_mass + args.step, args.step).astype(np.float32)
 mass_bins = np.array([[mass_range[i],mass_range[i+1]] for i in range(len(mass_range)-1)])
 
 BASEPATH = '/disks/cosmodm/vdvuurst'
 data_dir = os.path.join(BASEPATH,f'data/OneHalo_{args.step}dex')
-if not os.path.isdir(data_dir):
-    os.mkdir(data_dir)
+mkdir_if_non_existent(data_dir)
 
 # Set some args to bools
 overwrite = bool(args.overwrite)
@@ -64,11 +73,15 @@ if args.lower_radius and args.upper_radius:
     create_range = False
 else:
     lr = 0.
-    ur = 5.
+    if r_unit == 'Mpc':
+        ur = 5.
+    elif r_unit == 'Rvir':
+        ur = 2.5 
+    else:
+        raise ValueError('This should not have happened, how did you get another radial unit?')
     create_range = True
 
-#NOTE: hardcoded r_start, r_stop and r_steps with this, might make modifiable later
-default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = 18, bins= rice_bins, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
+default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = args.r_bins, r_unit = r_unit, bins= rice_bins, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
                             return_values = False, loglambda = loglambda, single_gauss = single_gauss)
@@ -85,7 +98,7 @@ def _create_iterable_input(**kwargs):
 
     for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
-        filepath =  os.path.join(data_dir,filename)
+        filepath =  os.path.join(data_dir, filename)
 
         fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, loglambda = kwargs['loglambda'])
 
@@ -118,7 +131,8 @@ else:
             for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
                 if verbose: print(f'WORKING ON MASS BIN M_1{mass_bin[0]}-1{mass_bin[1]}')
                 filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
-                filepath =  os.path.join(data_dir,filename)
+                filepath =  os.path.join(data_dir, filename)
+
                 file_exists = os.path.isfile(filename)
 
                 filehead = filename.split('.hdf5')[0]

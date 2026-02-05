@@ -11,7 +11,7 @@ from onehalo_plotter import plot_distribution_gaussian_mod
 from json import load, dump
 import emcee
 from corner import corner
-from shrinking_gaussian_move import ShrinkingGaussianMove
+from Etc.shrinking_gaussian_move import ShrinkingGaussianMove
 
 
 #TODO: expand accordingly
@@ -31,9 +31,10 @@ class ONEHALO:
             self.COM = handle["ExclusiveSphere/100kpc/CentreOfMass"][:]
             self.SOMass = handle['SO/200_mean/TotalMass'][:]
             self.Rvir = handle['SO/200_mean/SORadius'][:]
+
             self.boxsize = handle['Header'].attrs['BoxSize'][0]
 
-        self.half_boxsize = self.boxsize / 2
+        # self.half_boxsize = self.boxsize / 2
         self.COM = self.COM % self.boxsize #if any coordinate value is negative or larger than box size - map into the box
 
         # ~IsCentral picks out sattelites, this picks out all centrals !that host sattelites! and how many sattelites they host
@@ -71,6 +72,9 @@ class ONEHALO:
         HostCOMs, HostVels = self.COM[HostIndices], self.COMvelocity[HostIndices]
         SatSorter = np.argsort(self.HostHaloIndex[SatteliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
         SatCOMs, SatVels = self.COM[SatteliteMask][SatSorter], self.COMvelocity[SatteliteMask][SatSorter]
+        
+        # Get the virial radii for all sattelites in order
+        self.SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
 
         relative_COMs = SatCOMs - np.repeat(HostCOMs, subhalos_per_host, axis = 0)
         relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
@@ -79,22 +83,39 @@ class ONEHALO:
             file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
             file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
     
-    def create_radial_catalogue(self, radial_bin: Tuple[np.float32, np.float32], filename:str):
-        mass_filename = filename.replace(f'/r_{radial_bin[0]:.2f}-{radial_bin[1]:.2f}','')
-
+    def create_radial_catalogue(self, radial_bin: Tuple[np.float32, np.float32], rad_filename:str, mass_filename:str, r_unit: str = 'Rvir'):
         with h5py.File(mass_filename, 'r') as handle:
             rel_vels = handle['rel_vels'][:] 
             rel_pos = handle['rel_pos'][:] 
 
-        rel_sq_dist = np.square(rel_pos).sum(axis = 1)
+        if r_unit == 'Rvir':
+            # Change distance units to R200m (Rvir) instead of Mpc on a per halo basis
+            try:
+                rel_sq_dist = np.square(rel_pos).sum(axis = 1) / np.square(self.SatRvirs)
+
+            except AttributeError: # We have not called the mass catalogue and need some stuff from it, so we calc it here
+                mass_mask = self._make_mass_mask(self.SOMass, self.lower_mass, self.upper_mass) #functions as a central mask implicitly
+                self.mass_mask = mass_mask
+                HostIndices = self.HaloIndices[mass_mask] #if it has non-zero mass it must be a central                
+                # From the catalogue of sattelite hosting haloes, select only those we know actually HAVE subhaloes and thus are relevant for this dataset
+                Relevant_Hosts_mask = np.isin(self.HostHaloIDs,HostIndices)
+                HostIndices = self.HostHaloIDs[Relevant_Hosts_mask] # This now replaces the previous HostIndices
+    
+                subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask] # Get the virial radii for all sattelites in order
+                self.SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
+
+                rel_sq_dist = np.square(rel_pos).sum(axis = 1) / np.square(self.SatRvirs)
+
+        elif r_unit == 'Mpc':
+            rel_sq_dist = np.square(rel_pos).sum(axis = 1)
 
         radial_mask = (radial_bin[0]**2 <= rel_sq_dist) & (rel_sq_dist <= radial_bin[1]**2)
         masked_data = rel_vels[radial_mask]
 
         if masked_data.size < 100: #TODO: check minimum, maybe even more - like 1000? make modifiable? also check in fit_to_radial_bins if changed
-            return True
+            return True # return that bin has insufficient data
 
-        with h5py.File(filename, 'w') as file:
+        with h5py.File(rad_filename, 'w') as file:
             file.create_dataset('rel_vels', data = masked_data, dtype = np.float32)
 
 
@@ -156,7 +177,8 @@ class ONEHALO_fitter:
 
         random_pos = True #TODO: change to be modifiable from terminal 
         if not random_pos:
-
+            
+            #TODO: if this will even be used henceforth, it is now dependent on three parameters not some n
             noise = np.random.randn(nwalkers, ndim)
             noise[:,-1] = np.abs(noise[:,-1]) * 1e-4 #lambda must take positive values and be smaller
             if loglambda:
@@ -242,25 +264,63 @@ class ONEHALO_fitter:
             best_likelihood = likelihoods[best_arg]
             best_params = np.array([samples[best_arg, i] for i in range(ndim)])
         
-        ## BELOW is naive and outdated, takes the whole chain (after burnin) and percentiles.
-        # result = np.zeros(ndim)
-        # errs = np.zeros((3,2))
-        # for i in range(ndim):
-        #     mcmc = np.percentile(flat_samples[:, i], [16, 50, 84])
-        #     err = np.diff(mcmc)
-            
-        #     result[i] = mcmc[1]
-        #     errs[i,0] = err[0]
-        #     errs[i,1] = err[1]
-        
-        # param_dict = dict(zip(param_names, result.tolist()))
-        # param_dict['errors'] = errs.tolist()
-
-
-        #TODO: change to short MCMC chain?
+ 
         # Perturb the best found parameter set for an error estimate
-        param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), single_gauss = kwargs['single_gauss'])
+        naive_perturbation = True
+        if naive_perturbation:
+            param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), single_gauss = kwargs['single_gauss'])
         
+        else: # start new, short MCMC chain to estimate the error
+            pos = np.random.normal(loc = best_params, scale = 0.001 * best_params, size = (nwalkers, ndim))
+            new_sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (data, loglambda, kwargs['single_gauss']))
+            new_sampler.run_mcmc(pos, nsteps = 100, progress = False) # no progress lest it clutter up the output
+            
+            flat_samples_perturb = new_sampler.get_chain(discard=0, thin=5, flat=True) 
+            
+            errs = np.zeros((3,2))
+            for i in range(ndim):
+                mcmc = np.percentile(flat_samples_perturb[:, i], [16, 50, 84])
+                err = np.diff(mcmc)
+                errs[i,0] = err[0]
+                errs[i,1] = err[1]
+            
+            # We ONLY use this short chain for error estimates
+            param_dict = dict(zip(param_names, best_params.tolist()))
+            param_dict['errors'] = errs.tolist()
+
+            # Uncomment in case a diagnostic plot of the walkers is desired
+            # fig, axes = plt.subplots(ndim + 1, figsize=(12, 10), sharex=True)
+            # new_samples = new_sampler.get_chain()
+
+            # for i in range(ndim):
+            #     ax:plt.Axes = axes[i]
+            #     ax.plot(new_samples[:, :, i], alpha=0.3)
+            #     ax.set_xlim(0, len(new_samples))
+            #     ax.set_ylabel(param_labels[i])
+            #     ax.yaxis.set_label_coords(-0.1, 0.5)
+
+            #     ymin, ymax = ax.get_ylim()
+            #     ax.set_ylim(ymin, ymax)
+
+            # likelihoods = new_sampler.get_log_prob()
+            # # we want the MAXIMUM likelihood here, not the minimum negative likelihood (which would be equivalent)
+            # best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape) 
+            # best_likelihood = likelihoods[*best_arg]
+            # best_params = np.array([new_samples[*best_arg, i] for i in range(ndim)])
+  
+            # likelihoods_plot = np.log10(-1 * likelihoods)
+
+            # axes[-1].plot(likelihoods_plot, alpha = 0.3)
+            # axes[-1].set(ylabel = r'$\log\left(-\log(\mathcal{L})\right)$')
+            # axes[-1].set_xlabel("Step number")
+
+            # ymin, ymax = axes[-1].get_ylim()
+            # axes[-1].set_ylim(ymin, ymax)
+
+            # plt.savefig(f'{filename}_PERTURBTEST.png', dpi = 200)
+            # plt.close()
+
+
         # Add some more diagnostics to the dictionaries for later use and ease
         param_dict['nwalkers'] = nwalkers
         param_dict['nsteps'] = nsteps
@@ -276,11 +336,13 @@ class ONEHALO_fitter:
                 masstail = os.path.split(head)[1]
 
             param_path = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/emcee'
-            if not os.path.isdir(os.path.join(param_path, masstail)):
-                os.mkdir(os.path.join(param_path, masstail))
+            mkdir_if_non_existent(os.path.join(param_path, masstail))
             
+            param_path = os.path.join(param_path, masstail, kwargs['r_unit'])            
+            mkdir_if_non_existent(param_path)
+
             single_gauss_str = '' if not kwargs['single_gauss'] else '_single_gaussian'
-            param_path = os.path.join(param_path, masstail, rtail + f'{loglambda_str}{single_gauss_str}.json')
+            param_path = os.path.join(param_path, rtail + f'{loglambda_str}{single_gauss_str}.json')
             
             with open(param_path, 'w') as f:
                 dump(param_dict, f, indent = 1)
@@ -346,11 +408,6 @@ class ONEHALO_fitter:
                 args=(data),
                 bounds=bounds
             )
-
-
-        # if verbose:
-        #   print("Optimized parameters:", result.x)
-        #   print(result)
         
         if save_params:
             param_dict = dict(zip(param_names, result.x)) 
@@ -358,9 +415,8 @@ class ONEHALO_fitter:
             masstail = os.path.split(head)[1]
 
             param_path = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize'
-            if not os.path.isdir(os.path.join(param_path, masstail)):
-                os.mkdir(os.path.join(param_path, masstail))
-            
+            mkdir_if_non_existent(os.path.join(param_path, masstail))
+                        
             param_path = os.path.join(param_path, masstail, rtail + '.json')
             
             with open(param_path, 'w') as f:
@@ -415,7 +471,7 @@ class ONEHALO_fitter:
             errors = np.zeros((len(rbins), 3, 2))
         
         for i,rbin in enumerate(rbins):
-            rpath = os.path.join(datapath, f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
+            rpath = os.path.join(datapath, kwargs['r_unit'], f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
 
             try:
                 with h5py.File(rpath, 'r') as file:
@@ -425,11 +481,13 @@ class ONEHALO_fitter:
                     tqdm.write(f'{rpath} does not exist, skipping...')
                 continue
 
-            filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}'
+            filename = f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins_{kwargs['r_unit']}/M_{self.lower_mass}-{self.upper_mass}'
+            mkdir_if_non_existent(f'/disks/cosmodm/vdvuurst/figures/{method}_results_radial_bins_{kwargs['r_unit']}')
+            mkdir_if_non_existent(filename)
+
             if kwargs['single_gauss']:
                 filename += f'/single_gaussian'
-                if not os.path.isdir(filename):
-                    os.mkdir(filename)
+                mkdir_if_non_existent(filename)
 
             filename += f'/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 

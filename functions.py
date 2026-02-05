@@ -1,8 +1,10 @@
 import numpy as np
 from scipy.special import gammainc
 from typing import Callable
+import os
 
 GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]]
+# GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]] #STANDARD
 
 
 def Romberg(a,b,func,m=6):
@@ -127,13 +129,13 @@ def mod_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full wi
     
     return log_L
 
-def mod_gaussian_log_likelihood(params, data, loglambda, fix_lambda): #full with prior
+def mod_gaussian_log_likelihood(params, data, loglambda, single_gauss): #full with prior
     prior = log_prior_loglambda if loglambda else log_prior
     lp = prior(params)
     if not np.isfinite(lp):
         return -np.inf
 
-    if fix_lambda: params[-1] = 0
+    if single_gauss: params[-1] = 0
 
     mu_func = mod_gaussian_loglambda if loglambda else mod_gaussian
     mu_i = mu_func(data, *params)
@@ -227,7 +229,7 @@ def rice_bins(N):
     return 2 * int(np.cbrt(N))
 
 
-def perturb_around_likelihood(L: float, params: np.array, log_likelihood_func: Callable[[np.array], float], loglambda: bool = False, fix_lambda = False) -> dict:
+def perturb_around_likelihood(L: float, params: np.array, log_likelihood_func: Callable[[np.array], float], loglambda: bool = False, single_gauss = False) -> dict:
     """_summary_
 
     Args:
@@ -247,7 +249,7 @@ def perturb_around_likelihood(L: float, params: np.array, log_likelihood_func: C
         param_steps = [1., 1., 1.]
 
     L_thresh = 1.01 * L #1%
-    if not fix_lambda:
+    if not single_gauss:
         param_dict = {'sigma_1':params[0], 'sigma_2':params[1], 'lambda': params[2], 'errors':[[] for i in range(len(params))]}
         for i in range(len(params)):
             param_up = _perturb_param(params, i, param_steps[i], L, L_thresh, dir = 1, log_likelihood_func = log_likelihood_func)
@@ -345,3 +347,7 @@ def _perturb_param(params: np.array, param_idx: int, step: float, L: float, L_th
 def BIC(L, n, k = 3):
     #L is assumed already as a logarithm and as a MAXIMUM
     return (k * np.log(n)) - 2 * L
+
+def mkdir_if_non_existent(path):
+    if not os.path.isdir(path):
+        os.mkdir(path)
