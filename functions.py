@@ -46,12 +46,13 @@ def Romberg(a,b,func,m=6):
 
 
 def modified_logspace(start, stop, num, base = 10):
-    res = np.zeros(num)
     stop = np.log10(stop)
     if start == 0:
-        start = np.log10(0.1)
-        y = np.power(base, np.linspace(start, stop, num - 1))
-        res[1:] = y
+        # res = np.zeros(num)
+        # start = np.log10(0.1)
+        # y = np.power(base, np.linspace(start, stop, num - 1))
+        # res[1:] = y
+        res = np.logspace(0, np.log10(2.5 + 1), 20) - 1
     else:
         start = np.log10(start)
         res = np.power(base, np.linspace(start, stop, num))

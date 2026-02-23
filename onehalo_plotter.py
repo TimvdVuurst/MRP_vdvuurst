@@ -87,12 +87,15 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
             else:
                 param_latex = param
 
-            paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
+            paramstr += latex_formatter[param_latex] +\
+                  f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
+    
     else:
         distname = 'Single Gaussian'
         i, param = 0, 'sigma_1'
         param_latex = param
-        paramstr += latex_formatter[param_latex] + f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
+        paramstr += latex_formatter[param_latex] +\
+              f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
 
     # Calculating G-statistic for goodness of fit estimate
     integral_func = mod_gaussian_integral if not loglambda else mod_gaussian_integral_loglambda

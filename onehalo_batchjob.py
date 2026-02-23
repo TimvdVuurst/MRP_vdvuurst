@@ -6,6 +6,7 @@ import argparse
 from tqdm import tqdm
 from multiprocessing import Pool
 from functions import modified_logspace, rice_bins, mkdir_if_non_existent
+from itertools import product
 
 import warnings
 
@@ -22,27 +23,31 @@ warnings.filterwarnings('ignore',category = RuntimeWarning)
 SOAP_PATH_DEFAULT = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOAP-HBT/halo_properties_0077.hdf5"
 
 parser = argparse.ArgumentParser()
+# Mass parameters
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
 parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') 
 parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Size of mass bins in dex. Defaults to 0.5.')
 
-
+#Radial parameteres
 parser.add_argument('-r1','--lower_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!')
 parser.add_argument('-r2','--upper_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!') 
 parser.add_argument('-RB','--r_bins', type = int, default = 20, help = 'Numer of radial bins to use. Defaults to 20.') 
-parser.add_argument('-RU', '--rad_unit', type = str, default = 'rvir', choices = ['rvir', 'mpc', 'Mpc', 'Rvir'], help = 'Unit to use for radial bins. Either Mpc or Rvir (i.e. R200m), not case sensitive in the first letter.')
+parser.add_argument('-RU', '--rad_unit', type = str, default = 'Rvir', choices = ['rvir', 'mpc', 'Mpc', 'Rvir'], help = 'Unit to use for radial bins. Either Mpc or Rvir (i.e. R200m), not case sensitive in the first letter.')
 
-
+#Meta settings
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
-# parser.add_argument('-B', '--bins', type = int, default = 500, help = 'Number of velocity bins')
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
-parser.add_argument('-NS', '--num_steps', type = int, default = 1500, help = 'Number of walker steps passed to emcee.')
+parser.add_argument('-NS', '--num_steps', type = int, default = 1000, help = 'Number of walker steps passed to emcee.')
+
+#Efficiency controllers
+parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
+
+# Variants
 parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
 parser.add_argument('-SG', '--single_gauss', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0 to emulate a single Gaussian. Default is 0.')
-parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
 
 args = parser.parse_args()
 
@@ -58,7 +63,7 @@ mkdir_if_non_existent(data_dir)
 
 # Set some args to bools
 overwrite = bool(args.overwrite)
-multiprocess = bool(args.multiprocess) and len(mass_bins) > 1 #if we have only 1 mass bin we do not need to go through the hassle of multiprocessing
+multiprocess = bool(args.multiprocess)
 verbose = bool(args.verbose) and not multiprocess # set verbose to false during multiprocess
 loglambda = bool(args.loglambda)
 catalogued = bool(args.catalogued)
@@ -68,6 +73,8 @@ def create_kwargs(**kwargs):
     return kwargs
 
 if args.lower_radius and args.upper_radius:
+    multiprocess = False
+    verbose = True
     lr = float(args.lower_radius)
     ur = float(args.upper_radius)
     create_range = False
@@ -92,11 +99,11 @@ def _create_iterable_input(**kwargs):
     if create_range:
         r_range = modified_logspace(kwargs['r_start'], kwargs['r_stop'], kwargs['r_steps']) 
     else:
-        r_range(kwargs['r_start'], kwargs['r_stop'])
+        r_range = (kwargs['r_start'], kwargs['r_stop'])
     
     kwargs['rbins'] = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)])
 
-    for mass_bin in reversed(mass_bins): # High mass bins first, since these have the least entries
+    for mass_bin in mass_bins:
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir, filename)
 
@@ -104,13 +111,24 @@ def _create_iterable_input(**kwargs):
 
         fitters.append(fitter)
 
-    return [[f, m, kwargs] for f,m in zip(fitters,reversed(mass_bins))]
+    if catalogued:
+        fitters_and_mass_bins = list(zip(fitters, mass_bins))
+        return [[f, m, r, kwargs] for (f,m), r in product(fitters_and_mass_bins, kwargs['rbins'])]
+
+    return [[f, m, kwargs] for (f,m), r in zip(fitters, mass_bins)]
 
 def _run_experiment_radial_bins(inpt):
-    fitter, mass_bin, kwargs = inpt
-    mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
-    fitter.fit_to_radial_bins(catalogued = catalogued, datapath = mass_path, **kwargs)
-    tqdm.write(f'MASS BIN 1{mass_bin[0]}-1{mass_bin[1]} dex COMPLETED')
+    if catalogued:
+        fitter, mass_bin, rbin, kwargs = inpt
+        mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
+        fitter.fit_to_catalogued_bin(rbin = rbin, datapath = mass_path, **kwargs)
+        # tqdm.write(f'M 1{mass_bin[0]}-1{mass_bin[1]} r {rbin[0]:.2f}-{rbin[1]:.2f} COMPLETED')
+
+    else:
+        fitter, mass_bin, kwargs = inpt
+        mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
+        fitter.fit_to_radial_bins(catalogued = catalogued, datapath = mass_path, **kwargs)
+        tqdm.write(f'MASS BIN 1{mass_bin[0]}-1{mass_bin[1]} dex COMPLETED')
 
 
 #This makes plots that are made in the processes pretty by changing global mpl settings
@@ -120,7 +138,11 @@ if multiprocess:
     # all kwargs given here explicitly will be passed on to ONEHALO_fitter.fit_to_radial_bins() 
     iterable_input = _create_iterable_input(method = args.method.lower(), mass_bins = mass_bins, **default_kwargs)
 
-    NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
+    if not catalogued:
+        NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
+    else: # for the catalogued data we also parallelize on radial bins
+        NPROCS = 20
+
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
         for _ in p.imap_unordered(_run_experiment_radial_bins, iterable_input):
             pbar.update()
