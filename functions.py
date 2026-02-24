@@ -352,3 +352,8 @@ def BIC(L, n, k = 3):
 def mkdir_if_non_existent(path):
     if not os.path.isdir(path):
         os.mkdir(path)
+
+
+def flatten(xss):
+    # Flatten a python list using list comprehension
+    return [x for xs in xss for x in xs]

@@ -39,7 +39,7 @@ parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a c
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
-parser.add_argument('-NS', '--num_steps', type = int, default = 1000, help = 'Number of walker steps passed to emcee.')
+parser.add_argument('-NS', '--num_steps', type = int, default = 250, help = 'Number of walker steps passed to emcee.')
 
 #Efficiency controllers
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
@@ -48,6 +48,7 @@ parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 
 # Variants
 parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
 parser.add_argument('-SG', '--single_gauss', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0 to emulate a single Gaussian. Default is 0.')
+parser.add_argument('-FS','--flip_sigmas', type = int, default = 0, help = 'If the sigma_1 parameter is smaller than the sigma_2 parameter after fitting, flip them and cast lambda to 1 - lambda. Default is 0.')
 
 args = parser.parse_args()
 
@@ -68,6 +69,7 @@ verbose = bool(args.verbose) and not multiprocess # set verbose to false during 
 loglambda = bool(args.loglambda)
 catalogued = bool(args.catalogued)
 single_gauss = bool(args.single_gauss)
+flip_sigmas = bool(args.flip_sigmas)
 
 def create_kwargs(**kwargs):
     return kwargs
@@ -91,7 +93,7 @@ else:
 default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = args.r_bins, r_unit = r_unit, bins= rice_bins, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
-                            return_values = False, loglambda = loglambda, single_gauss = single_gauss)
+                            return_values = False, loglambda = loglambda, single_gauss = single_gauss, flip_sigmas = flip_sigmas)
 
 
 def _create_iterable_input(**kwargs):
@@ -107,7 +109,7 @@ def _create_iterable_input(**kwargs):
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir, filename)
 
-        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, loglambda = kwargs['loglambda'])
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'])
 
         fitters.append(fitter)
 
@@ -141,7 +143,7 @@ if multiprocess:
     if not catalogued:
         NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
     else: # for the catalogued data we also parallelize on radial bins
-        NPROCS = 20
+        NPROCS = 32
 
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
         for _ in p.imap_unordered(_run_experiment_radial_bins, iterable_input):
@@ -159,8 +161,8 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False, loglambda = default_kwargs['loglambda'])
-                                        # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json', joint = False)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = default_kwargs['loglambda'])
+                                        # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json')
                 
                 if create_range:
                     r_range = modified_logspace(default_kwargs['r_start'], default_kwargs['r_stop'], default_kwargs['r_steps']) 
@@ -185,7 +187,7 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None)
                 
                 fitter.fit_to_radial_bins(method='minimize', verbose = verbose, save_params = True,
                                                     plot = True, bins = args.bins, overwrite = overwrite)
@@ -200,7 +202,7 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, joint = False)
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None)
 
                 fitter.fit_to_radial_bins(method='minimize', verbose = verbose, save_params = True, plot = True, bins = args.bins, overwrite = overwrite)
                 print(f'MINIMIZE FINISHED ON {filename}')

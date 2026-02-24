@@ -40,7 +40,6 @@ sigma_2_r_funcs = [constant_func, parabola_func]
 m_funcs = [linear_func, poly_3_func, exponential_func]
 
 no_params = lambda f: len(signature(f).parameters) - 1
-no_params(exponential_func)
 
 def flatten(xss):
     return [x for xs in xss for x in xs]
@@ -55,3 +54,5 @@ sigma_2_funcs = create_function_combinations(sigma_2_r_funcs)
 
 all_combis = list(product(lambda_funcs, sigma_1_funcs, sigma_2_funcs))
 print(f'There are {len(all_combis)} function combinations')
+
+

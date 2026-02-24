@@ -11,7 +11,8 @@ from json import load, dump
 import emcee
 from corner import corner
 from Etc.shrinking_gaussian_move import ShrinkingGaussianMove
-
+from functional_forms import * # also runs some code to create the functional_form catalogue in the all_combis variable
+from time import time
 
 #TODO: expand accordingly
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
@@ -122,48 +123,36 @@ class ONEHALO:
 
 
 class ONEHALO_fitter:
-    def __init__(self, PATH: str, initial_param_file: str = None, joint: bool = False, loglambda: bool = False):
+    def __init__(self, PATH: str, initial_param_file: str = None, loglambda: bool = False):
         """_summary_
 
         Args:
-            PATH (str): _description_
-            initial_param_file (str): _description_. Defaults to None.
-            joint (bool, optional): Whether to use parameterizations of the three gaussian parameters (9 params in total). 
-                                    Defaults to False.
+            PATH (str): Path to hdf5 file specifying the data in a given massbin
+            initial_param_file (str): path to .json file holding initial parameter values for the fitting process. If None, empirically good default values are used. Defaults to None.
         """
         self.PATH = PATH
 
+        # Exctract massbin from the file path
         massbin = os.path.split(self.PATH)[-1].split('_')[-1].split('.hdf5')[0].split('-')
         self.lower_mass, self.upper_mass = np.float32(massbin[0]), np.float32(massbin[1])
 
-        self.joint = joint
-
-        if initial_param_file:
-            if self.joint:
-                with open(initial_param_file, 'r') as f:
-                    self.initial_param_dict = load(f)[f'M_{self.lower_mass}-{self.upper_mass}']
-                    #TODO: same as below presumably, with removing errors
-            else:
-                with open(initial_param_file, 'r') as f:
-                    self.initial_param_dict = load(f)
-                #NOTE: some dicts are bigger, we want only the param data, we dont care about error values
-                self.initial_param_dict = {"sigma_1": self.initial_param_dict['sigma_1'],
-                                            "sigma_2": self.initial_param_dict['sigma_2'], 
-                                            "lambda": 0.} 
-
+        if initial_param_file: # if some file with initial parameters is specified
+            with open(initial_param_file, 'r') as f:
+                self.initial_param_dict = load(f)
+            #NOTE: some dicts are bigger, we want only the param data, we dont care about error values
+            self.initial_param_dict = {"sigma_1": self.initial_param_dict['sigma_1'],
+                                        "sigma_2": self.initial_param_dict['sigma_2'], 
+                                        "lambda": 0.} 
         else:
-            # some random stuff in the ballpark of where we want them to kickstart
-            if self.joint:
-                # this will not work with an ensemble of function combinations
-                raise ValueError("No initial parameter file specified.")
-            # These values are ok to jumpstart the process across mass and radial bins
-            else:
-                self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':0 if not loglambda else -100} 
+            # some random stuff in the ballpark of where we want them to kickstart, works well
+            self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':0 if not loglambda else -100} 
 
+        # Load in the data
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
-            self.rel_vels = handle['rel_vels'][:]#.flatten()
+            self.rel_vels = handle['rel_vels'][:]
         
+        # Some calculations to store for marginal speed-up in the MCMC process
         self.rel_sq_dist = np.square(self.rel_pos).sum(axis = 1)
         self.rel_vel_sq = np.square(self.rel_vels) * -0.5
 
@@ -173,6 +162,8 @@ class ONEHALO_fitter:
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
                                      plot = True, verbose = False, filename = 'Mfit', save_params = False, loglambda = False, **kwargs):
         
+        now = time()
+
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
         ndim = init_guess.shape[0]
@@ -206,7 +197,7 @@ class ONEHALO_fitter:
             sampler = emcee.EnsembleSampler(nwalkers, ndim, log_likelihood_func, args = (bin_edges, bin_heights))
             sampler.run_mcmc(pos, nsteps, progress = verbose)
 
-        burnin = 250 # does not matter so much
+        burnin = 50 # does not matter so much
 
         samples = sampler.get_chain()
         likelihoods = sampler.get_log_prob()
@@ -218,7 +209,7 @@ class ONEHALO_fitter:
         param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), single_gauss = kwargs['single_gauss'])
 
         # Sometimes, sigma_1 is seen as the small contribution. For consistency we flip this and break the prior
-        if param_dict['sigma_1'] < param_dict['sigma_2']:
+        if param_dict['sigma_1'] < param_dict['sigma_2'] and kwargs['flip_sigmas']:
 
             rbin = kwargs['rbin']
             tqdm.write(f' r {rbin[0]:.2f}-{rbin[1]:.2f}: SIGMA1 < SIGMA2, FLIPPING')
@@ -236,8 +227,6 @@ class ONEHALO_fitter:
         param_dict['likelihood'] = best_likelihood
 
         if plot:
-            # TODO: with joint there's gonna be a lot of parameters which may clutter a walker plot if they are all plotted
-            # vertically
             fig, axes = plt.subplots(ndim + 1, figsize=(12, 10), sharex=True)
             samples = sampler.get_chain()
 
@@ -309,7 +298,9 @@ class ONEHALO_fitter:
                     plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
                 else: 
                     plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
-        return param_dict
+        
+        duration = time() - now
+        return param_dict, duration
         # return samples
 
     def fit_to_catalogued_bin(self, rbin: np.array, datapath: str, **kwargs):
@@ -336,9 +327,13 @@ class ONEHALO_fitter:
         filename += f'/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 
         likelihood_func = mod_gaussian_log_likelihood
-        output = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
+        output, duration = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
                                                         filename = filename, rbin = rbin, **kwargs)
         
+        with open('timing.txt', 'a') as tfile:
+            tfile.write(f'{self.lower_mass}-{self.upper_mass},{rbin[0]:.2f}-{rbin[1]:.2f},{duration}\n')
+            
+
         if kwargs['verbose']:
             print(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
 
@@ -348,7 +343,6 @@ class ONEHALO_fitter:
 
     def _fit_to_catalogued_radial_bins_sequential(self, rbins: np.array, datapath, **kwargs):
         #datapath should go to massbin folder with hdf5 files
-
         
         if kwargs['return_values']:
             results = np.zeros((len(rbins), 3))
@@ -441,7 +435,7 @@ class ONEHALO_fitter:
                     filename = f'/disks/cosmodm/vdvuurst/figures/emcee_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
                 
                     likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
-                    result, err = self._fit_modified_gaussian_emcee(self.rel_vel_sq, bins, self.initial_param_dict, mod_gaussian_log_likelihood,
+                    result, err = self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, mod_gaussian_log_likelihood,
                                                         nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
                                                         verbose = verbose, save_params = save_params, plot = plot, filename = filename, **kwargs)
                     results[i] = result
@@ -518,3 +512,106 @@ class ONEHALO_fitter:
             self._fit_to_catalogued_radial_bins_sequential(**kwargs)
         else:
             self._fit_to_non_catalogued_radial_bins(**kwargs)
+
+
+
+
+def create_function_combinations(funclist): 
+    func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
+    return flatten(func_combis)
+
+class ONEHALO_joint_fitter:
+    def __init__(self, PATH: str = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex', init_param_file: str = '/disks/cosmodm/vdvuurst/data/initial_params.json'):
+        self.PATH = PATH
+
+        # with open(init_param_file, 'r') as f:
+        #     self.init_param_dict = load(f)
+
+        # TODO: hardcoded now, make function argument
+        mass_edges = [12 + 0.5*i for i in range(8)]
+        self.massbins = [f'M_{mass_edges[m]}-{mass_edges[m+1]}' for m in range(len(mass_edges)-1)]
+
+        #TODO: same as above
+        r_range = modified_logspace(0, 2.5, 20)
+        self.r_bins = [f'{r_range[i]:.2f}-{r_range[i+1]:.2f}' for i in range(len(r_range)-1)]
+
+        self.data_dict = {m:{r:[] for r in self.r_bins} for m in self.massbins}
+        # Load in the data for all mass- and radial bins
+        for mbin in self.massbins:
+            for rbin in self.r_bins:
+                path_to_data = os.path.join(self.PATH, mbin, 'Rvir', 'r_'+ rbin + '.hdf5')
+                with h5py.File(path_to_data, 'r') as handle:
+                    # rel_pos = handle['rel_pos'][:]
+                    rel_vels = handle['rel_vels'][:]
+                
+                # Some calculations to store for marginal speed-up in the MCMC process
+                # rel_sq_dist = np.square(rel_pos).sum(axis = 1)
+                
+                # self.data_dict[mbin]['rel_sq_dist'] = rel_sq_dist
+                self.data_dict[mbin][rbin] = rel_vels
+
+    def joint_likelihood(self, params: list, r_func: list, m_funcs: list, n_params_r: list, n_params_m: list):
+        # lambda_
+        # Can this be vectorized?
+        L = 0
+        for mbin in self.massbins:
+            for rbin in self.r_bins:
+                vel_data = self.data_dict[mbin][rbin]
+                
+
+
+
+    def fit_to_data(self, function_combi: list, nwalkers: int = 10, nsteps: int = 500, **kwargs):
+        # lambda_combi, sigma1_combi, sigma2_combi = function_combi
+        n_params_r = []
+        n_params_m = [[], [], []]
+        for i,param_combi in enumerate(function_combi):
+            r_function, m_parametrizations = param_combi # unpack the function combination for this specific parameter
+            n_params_r.append(len(m_parametrizations))
+            n_params_m[i] = [len(signature(m_func).parameters) - 1 for m_func in m_parametrizations]
+        
+        n_params = sum(flatten(n_params_m))
+
+        return n_params_r, n_params_m
+
+        # #TODO: tweak based on results and see if it can be made function specific
+        # init_pos = np.random.uniform(low = [-1000 for _ in range(n_params)], high = [1000 for _ in range(n_params)], size = (nwalkers, n_params))
+
+        # sampler = emcee.EnsembleSampler(nwalkers, n_params, self.joint_likelihood, args = (self.data_dict))
+        # sampler.run_mcmc(init_pos, nsteps, progress = kwargs['verbose'])
+
+        
+
+        
+    #     init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
+    #     ndim = init_guess.shape[0]
+
+
+
+    ## Below is wrong, since these are initial parameters based ONLY on r. I have no idea where the real ballpark
+    ## is, so just try smth out and we'll see how it goes. Same with the priors.
+    # def _get_init_params(self, function_name: str):
+    #     match function_name.lower():
+    #         case 'power_linear':
+    #             return np.array([self.init_param_dict[x] for x in ['p', 'n', 'q', 'b']])
+    #         case 'linear':
+    #             return np.array([self.init_param_dict[x] for x in ['m', 'c']])
+    #         case 'exponential':
+    #             return np.array([self.init_param_dict[x] for x in ['A', 'B', 'C']])
+    #         case 'exponential_squared':
+    #             return np.array([self.init_param_dict[x] for x in ['A', 'B', 'C']])
+    #         case 'power_law':
+    #             return np.array([self.init_param_dict[x] for x in ['p', 'n', 'q']])
+    #         case 'constant':
+    #             return 400.
+    #         case 'parabola':
+    #             return np.hstack(([1], np.array([self.init_param_dict[x] for x in ['m', 'c']])))
+    #         #the three below empircally deduced to work decently
+    #         case 'inverse':
+    #             return np.array([1., 0.2])
+    #         case 'poly_3':
+    #             return np.array([10, -50, 100, 50])
+    #         case 'poly_4':
+    #             return np.array([10, -50, 100, 0.5, 10])
+
+    #     raise ValueError(f"{function_name} not recognized, select a valid function.")
