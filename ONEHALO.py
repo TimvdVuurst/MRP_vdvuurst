@@ -2,7 +2,6 @@ import numpy as np
 import h5py
 from typing import Tuple
 from tqdm import tqdm
-from onehalo_plotter import format_plot
 import matplotlib.pyplot as plt
 import os
 from functions import *
@@ -10,7 +9,6 @@ from onehalo_plotter import plot_distribution_gaussian_mod
 from json import load, dump
 import emcee
 from corner import corner
-from Etc.shrinking_gaussian_move import ShrinkingGaussianMove
 from functional_forms import * # also runs some code to create the functional_form catalogue in the all_combis variable
 from time import time
 
@@ -162,7 +160,6 @@ class ONEHALO_fitter:
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
                                      plot = True, verbose = False, filename = 'Mfit', save_params = False, loglambda = False, **kwargs):
         
-        now = time()
 
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
@@ -205,8 +202,16 @@ class ONEHALO_fitter:
         best_likelihood = likelihoods[best_arg]
         best_params = np.array([samples[*best_arg, i] for i in range(ndim)])
 
+        now = time()
         # Perturb the best found parameter set for an error estimate
         param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), single_gauss = kwargs['single_gauss'])
+        duration = time() - now
+        # duration = 0.
+        # # NOTE: stand-in to save purely the results from MCMC
+        # param_dict = {'sigma_1':best_params[0], 'sigma_2':best_params[1], 'lambda': best_params[2], 'errors':[[] for _ in range(len(best_params))]}
+        # for i in range(3):
+        #     param_dict['errors'][i] = [np.abs(best_params[1] - GLOBAL_PRIOR_RANGE[i][0]), np.abs(best_params[i] - GLOBAL_PRIOR_RANGE[i][1])]
+
 
         # Sometimes, sigma_1 is seen as the small contribution. For consistency we flip this and break the prior
         if param_dict['sigma_1'] < param_dict['sigma_2'] and kwargs['flip_sigmas']:
@@ -299,7 +304,6 @@ class ONEHALO_fitter:
                 else: 
                     plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
         
-        duration = time() - now
         return param_dict, duration
         # return samples
 
@@ -516,9 +520,9 @@ class ONEHALO_fitter:
 
 
 
-def create_function_combinations(funclist): 
-    func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
-    return flatten(func_combis)
+# def create_function_combinations(funclist): 
+#     func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
+#     return flatten(func_combis)
 
 class ONEHALO_joint_fitter:
     def __init__(self, PATH: str = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex', init_param_file: str = '/disks/cosmodm/vdvuurst/data/initial_params.json'):

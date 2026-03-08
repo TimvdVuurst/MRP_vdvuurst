@@ -32,10 +32,9 @@ def poly_3_func(x, a, b, c, d):
 def poly_4_func(x, a, b, c, d, e):
     return a*power(x,4) + b*power(x, 3) + c* square(x) + d*x + e
 
-
 lambda_r_funcs = [exponential_func,inverse_func]
 sigma_1_r_funcs = [poly_3_func, poly_4_func]
-sigma_2_r_funcs = [constant_func, parabola_func]
+sigma_2_r_funcs = [linear_func, parabola_func]
 
 m_funcs = [linear_func, poly_3_func, exponential_func]
 
@@ -54,5 +53,4 @@ sigma_2_funcs = create_function_combinations(sigma_2_r_funcs)
 
 all_combis = list(product(lambda_funcs, sigma_1_funcs, sigma_2_funcs))
 print(f'There are {len(all_combis)} function combinations')
-
 

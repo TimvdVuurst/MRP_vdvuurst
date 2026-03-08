@@ -15,8 +15,8 @@ def format_plot():
     MEDIUM_SIZE = 12 * 2
     BIGGER_SIZE = 14 * 2
 
-    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
-    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
+    plt.rc('axes', titlesize=BIGGER_SIZE)                     # fontsize of the axes title\n",
+    plt.rc('axes', labelsize=BIGGER_SIZE)                    # fontsize of the x and y labels\n",
     plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
@@ -83,7 +83,7 @@ class TwoHaloPlotter:
             if len(bin_velocities) == 0:
                 continue
 
-            ax.hist(bin_velocities, bins=rice_bins(bin_velocities.size), alpha=0.75, color='b', edgecolor='black')
+            ax.hist(bin_velocities, bins=rice_bins(bin_velocities.size), alpha=0.75, color='b')
             # ax.ticklabel_format(useOffset=False, style='plain') # no scientific notation
 
         # No clue what this does yet
