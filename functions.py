@@ -5,9 +5,8 @@ from scipy.differentiate import derivative
 from typing import Callable
 import os
 
+# sigma_1, sigma_2, lambda
 GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]]
-# GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]] #STANDARD
-
 
 ## FUNCTIONS FOR ONEHALO LIKELIHOODS
 
@@ -90,8 +89,8 @@ def mod_gaussian_log_likelihood(params, data, loglambda, single_gauss): #full wi
 
     mu_func = mod_gaussian_loglambda if loglambda else mod_gaussian
     mu_i = mu_func(data, *params)
-    mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise
-    return np.sum(np.log(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
+    # mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise
+    return np.sum(np.log10(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
 
 def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
     sigma1, sigma2, lambda_ = params
@@ -276,30 +275,30 @@ def ddlambda_likelihood(v, sigma_1, sigma_2, lambda_):
 
 
 ### FOR PERTURBING AROUND THE OPTIMUM FROM MCMC
-def sample_for_brent(params, found_likelihood, log_likelihood_func, single_gauss = False):
+def sample_for_brent(params, found_likelihood, log_likelihood_func, single_gauss = False, threshold = 1.01):
     if single_gauss:
         step_sizes = [100.]
     else:
-        step_sizes = [100., 100., 0.1] # high valued steps
-    Lthresh = 1.01 * found_likelihood
+        step_sizes = [100., 100., 0.1] # high valued steps relative to global prior
+    Lthresh = threshold * found_likelihood # desired likelihood decrease, 1% by default
 
     bounds = [[] for _ in range(len(step_sizes))]
 
     for param_idx,step in enumerate(step_sizes):
         param_insert = params.copy()
         current_param_value = params[param_idx]
-        # perturbation_of_parameter = np.arange(params[param_idx] - 100*step, params[param_idx] + 100*step, step = step).reshape(200,1)
-        # step up
+
+        # step in the positive direction
         prior_flag = False
         Lcurrent = found_likelihood
 
         while Lcurrent < Lthresh:
             current_param_value += step
             if current_param_value >= GLOBAL_PRIOR_RANGE[param_idx][1]:
-                # current_param_value -= step # step back to previous
                 prior_flag = True
                 break
 
+            #inplace operation on param_insert to change the relevant parameter
             np.put(param_insert, param_idx, current_param_value)
             Lcurrent = log_likelihood_func(param_insert)
 
@@ -313,10 +312,10 @@ def sample_for_brent(params, found_likelihood, log_likelihood_func, single_gauss
         while Lcurrent < Lthresh:
             current_param_value -= step
             if current_param_value <= GLOBAL_PRIOR_RANGE[param_idx][0]:
-                # current_param_value -= step # step back to previous
                 prior_flag = True
                 break
 
+            #inplace operation on param_insert to change the relevant parameter
             np.put(param_insert, param_idx, current_param_value)
             Lcurrent = log_likelihood_func(param_insert)
 
@@ -327,20 +326,19 @@ def sample_for_brent(params, found_likelihood, log_likelihood_func, single_gauss
     return bounds
 
 
-def _perturb_params(params: np.array, log_likelihood_func: Callable[[np.array], float], single_gauss = False):
+def _perturb_params(params: np.array, log_likelihood_func: Callable[[np.array], float], single_gauss: bool = False, threshold: float = 1.01):
     """ Perturb parameter value, either upwards or downwards, and return parameter value when likelihood threshold is reached.
 
     Args:
-        params (list or array): list or array containing the parameter values in order [sigma1, sigma2, lambda]
-        param_idx (int): index pointing to the parameter to perturb in the params list
-        step (float): Stepsize for parameter perturbation
-        L (float): Likehood at the best point
+        params (list or array): list or array containing the parameter values *in order* [sigma1, sigma2, lambda]
         L_thresh (float): Threshold likelihood to reach.
-        dir (int, optional): Whether to perturb the parameter upwards or downwards; 1 for upwards, -1 for downwards. Defaults to 1.
         log_likelihood_func (function, optional): Log likelihood of the model. Defaults to mod_gaussian_log_likelihood. NOTE that this is an L-maximizing function since it is negative numbers we want to be as near to 0 as possible!
-
+        single_gaussian (bool, optional): Controls whether we are fitting a single gaussian model (True) or a Double Gaussian (False). Defaults to False.
+        threshold (float, optional): How much we want to be above the best found likelihood (relative). Defaults to 1.01 (1%). 
+    
     Returns:
-        float: parameter value at the likelihood threshold #TODO update
+        param_bounds (list): nested list of 2-lists holding found parameter bounds at which the likelihood meets the set threshold (lower, upper)
+        opt_params (np.ndarray): array holding results of scipy.optimize.minimize to find the local optimum near the input values. 
     """
     prior_ranges = GLOBAL_PRIOR_RANGE.copy()
 
@@ -362,7 +360,7 @@ def _perturb_params(params: np.array, log_likelihood_func: Callable[[np.array], 
     perturb_funcs = [perturb_sigma1, perturb_sigma2, perturb_lambda]
 
     # get the bounds for the root finder by taking large samples. note that this is actually the bottleneck of the code
-    brent_bounds = sample_for_brent(opt_params, -1*L_best, ll_func_for_minimize, single_gauss = single_gauss)
+    brent_bounds = sample_for_brent(opt_params, -1*L_best, ll_func_for_minimize, single_gauss = single_gauss, threshold=threshold)
 
     param_bounds = [[] for _ in range(len(params))]
 
@@ -401,24 +399,25 @@ def _perturb_params(params: np.array, log_likelihood_func: Callable[[np.array], 
 
     return param_bounds, opt_params
 
-def perturb_around_likelihood(L: float, params: np.array, log_likelihood_func: Callable[[np.array], float], single_gauss: bool = False) -> dict:
+def perturb_around_likelihood(params: np.array, log_likelihood_func: Callable[[np.array], float], single_gauss: bool = False, threshold: float = 1.01) -> dict:
     """ Given a maximum from MCMC, perturb around this found maximum in small steps to estimate the error and refine the estimate.
+        Uses the _perturb_params() functionality as a workhorse, this is moreso a wrapper around that function to format it to a dictionary
 
     Args:
-        L (float): Likelihood value at the best found parameter set
         params (np.array): Best found parameter set
         log_likelihood_func (function, optional): Log likelihood of the model. Defaults to mod_gaussian_log_likelihood.
         single_gauss (bool, optional): Controls whether we "turn off" the lambda parameter, i.e. fix it to 0.
+        threshold (float, optional): How much we want to be above the best found likelihood (relative). Defaults to 1.01 (1%). 
 
     Returns:
-        dict: dictionary of parameter values and error estimates
+        param_dict: dictionary of parameter values and error estimates
     """
     
     #TODO: fix for joint model, there will be more parameters and this is hardcoded to 3 parameters now
     # ^that is gonna suck so fucking much
 
-    bounds, best_params = _perturb_params(params, log_likelihood_func, single_gauss = single_gauss)
-    param_dict = {'sigma_1':best_params[0], 'sigma_2':best_params[1], 'lambda': best_params[2], 'errors':[[] for i in range(len(best_params))]}
+    bounds, best_params = _perturb_params(params, log_likelihood_func, single_gauss = single_gauss, threshold = threshold)
+    param_dict = {'sigma_1':best_params[0], 'sigma_2':best_params[1], 'lambda': best_params[2], 'errors':[[] for _ in range(len(best_params))]}
 
     for i in range(len(best_params)):
         param_down, param_up = bounds[i]

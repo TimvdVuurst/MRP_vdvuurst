@@ -1,3 +1,7 @@
+import sys
+if '/disks/cosmodm/vdvuurst' not in sys.path:
+    sys.path.append('/disks/cosmodm/vdvuurst')
+
 import os
 import numpy as np
 from ONEHALO import ONEHALO

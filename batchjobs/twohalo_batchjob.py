@@ -1,6 +1,10 @@
+import sys
+if '/disks/cosmodm/vdvuurst' not in sys.path:
+    sys.path.append('/disks/cosmodm/vdvuurst')
+
 import os
 import numpy as np
-from TWOHALO import TWOHALO, format_plot
+from TWOHALO import TWOHALO
 from itertools import combinations_with_replacement
 import argparse
 

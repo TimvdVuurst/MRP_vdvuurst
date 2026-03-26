@@ -32,7 +32,6 @@ class ONEHALO:
 
             self.boxsize = handle['Header'].attrs['BoxSize'][0]
 
-        # self.half_boxsize = self.boxsize / 2
         self.COM = self.COM % self.boxsize #if any coordinate value is negative or larger than box size - map into the box
 
         # ~IsCentral picks out sattelites, this picks out all centrals !that host sattelites! and how many sattelites they host
@@ -45,8 +44,67 @@ class ONEHALO:
         elif m_max in [0,-1,np.nan, None]:
             return (10**m_min <= mass)
         return (10**m_min <= mass) & (mass <= 10**m_max) 
+
+    def create_full_dataset(self, mass_range: Tuple[np.float32,np.float32], filename: str, r_max: np.float32 = 2.5):
+        """ Create a full catalogue of halo mass, relative velocities and positions in a given mass range (so NOT binning!).
+
+        Args:
+            mass_range (Tuple[np.float32,np.float32]): Massbin in units of 10^10 Msol. Lower, upper.
+            filename (str): string specifying the full path to which the data is saved (must end on .hdf5)
+        """
+        lower_mass, upper_mass = mass_range
+        mass_mask = self._make_mass_mask(self.SOMass, lower_mass, upper_mass) #functions as a central mask implicitly
+        
+        # halo_masses = self.SOMass[mass_mask] # get all the masses
+        
+        HostIndices = self.HaloIndices[mass_mask] #if it has non-zero mass it must be a central
+        
+        # From the catalogue of sattelite hosting haloes, select only those we know actually HAVE subhaloes and thus are relevant for this dataset
+        Relevant_Hosts_mask = np.isin(self.HostHaloIDs,HostIndices)
+        
+        subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask]
+        HostIndices = self.HostHaloIDs[Relevant_Hosts_mask] # This now replaces the previous HostIndices
+
+        SatteliteMask = np.isin(self.HostHaloIndex, HostIndices) #pick out all the sattelites from relevant hosts
+
+        # Get the host COM pos, vel and mass, same for sattelites
+        HostCOMs, HostVels = self.COM[HostIndices], self.COMvelocity[HostIndices]
+        HostMasses = self.SOMass[HostIndices]
+        SatSorter = np.argsort(self.HostHaloIndex[SatteliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
+
+ 
+        SatCOMs, SatVels = self.COM[SatteliteMask][SatSorter], self.COMvelocity[SatteliteMask][SatSorter]
+        
+        # Get the virial radii for all sattelites in order
+        self.SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
+
+        relative_COMs = SatCOMs - np.repeat(HostCOMs, subhalos_per_host, axis = 0)
+        relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
+
+        
+        # Get the virial radii for all sattelites in order
+        SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
+        rel_dist = np.sqrt(np.square(relative_COMs).sum(axis = 1)) / SatRvirs # Calculate the distance from coordinates and set in units of virial radius
+
+        HostMasses = np.repeat(HostMasses, subhalos_per_host, axis = 0)
+
+        radial_mask = rel_dist < r_max # We set a maximum distance, beyond this we do not consider it to be an effect of the one halo term
+
+
+        with h5py.File(filename, 'w') as file:
+            file.create_dataset('rel_pos', data  = relative_COMs[radial_mask], dtype = np.float32)
+            file.create_dataset('rel_dist', data = rel_dist[radial_mask], dtype = np.float32)
+            file.create_dataset('rel_vels', data  = relative_vels[radial_mask], dtype = np.float32)
+            file.create_dataset('mass', data = HostMasses[radial_mask], dtype = np.float32)
+
     
     def create_catalogue(self, massbin: Tuple[np.float32,np.float32], filename: str):
+        """ Create a catalogue of relative velocities and positions in a given massbin.
+
+        Args:
+            massbin (Tuple[np.float32,np.float32]): Massbin in units of 10^10 Msol. Lower, upper.
+            filename (str): string specifying the full path to which the data is saved (must end on .hdf5)
+        """
         self.lower_mass, self.upper_mass = massbin
         self.filename = filename
 
@@ -121,12 +179,13 @@ class ONEHALO:
 
 
 class ONEHALO_fitter:
-    def __init__(self, PATH: str, initial_param_file: str = None, loglambda: bool = False):
+    def __init__(self, PATH: str, initial_param_file: str = None, loglambda: bool = False, load: bool= False):
         """_summary_
 
         Args:
             PATH (str): Path to hdf5 file specifying the data in a given massbin
-            initial_param_file (str): path to .json file holding initial parameter values for the fitting process. If None, empirically good default values are used. Defaults to None.
+            initial_param_file (str): path to .json file holding initial parameter values for the fitting process. If None, empirically decent default values are used. Defaults to None.
+            TODO: finish
         """
         self.PATH = PATH
 
@@ -145,6 +204,10 @@ class ONEHALO_fitter:
             # some random stuff in the ballpark of where we want them to kickstart, works well
             self.initial_param_dict = {'sigma_1':500.0, 'sigma_2': 150.0, 'lambda':0 if not loglambda else -100} 
 
+        if load:
+            self.load_data()
+
+    def load_data(self):
         # Load in the data
         with h5py.File(self.PATH, 'r') as handle:
             self.rel_pos = handle['rel_pos'][:]
@@ -152,14 +215,14 @@ class ONEHALO_fitter:
         
         # Some calculations to store for marginal speed-up in the MCMC process
         self.rel_sq_dist = np.square(self.rel_pos).sum(axis = 1)
-        self.rel_vel_sq = np.square(self.rel_vels) * -0.5
-
+        # self.rel_vel_sq = np.square(self.rel_vels) * -0.5
 
     @staticmethod
     def _fit_modified_gaussian_emcee(data, bins: int | Callable, initial_guess: dict, log_likelihood_func, use_binned = False,
                                      nwalkers = 32, nsteps = 5000, param_labels = [r'$\sigma_1$',r'$\sigma_2$',r'$\lambda$'],
                                      plot = True, verbose = False, filename = 'Mfit', save_params = False, loglambda = False, **kwargs):
-        
+        if kwargs['timeit']: now = time()
+
 
         #param_names not to be confused with param_labels; latter is latex formatted
         init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
@@ -202,22 +265,14 @@ class ONEHALO_fitter:
         best_likelihood = likelihoods[best_arg]
         best_params = np.array([samples[*best_arg, i] for i in range(ndim)])
 
-        now = time()
         # Perturb the best found parameter set for an error estimate
-        param_dict = perturb_around_likelihood(best_likelihood, best_params, lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), single_gauss = kwargs['single_gauss'])
-        duration = time() - now
-        # duration = 0.
-        # # NOTE: stand-in to save purely the results from MCMC
-        # param_dict = {'sigma_1':best_params[0], 'sigma_2':best_params[1], 'lambda': best_params[2], 'errors':[[] for _ in range(len(best_params))]}
-        # for i in range(3):
-        #     param_dict['errors'][i] = [np.abs(best_params[1] - GLOBAL_PRIOR_RANGE[i][0]), np.abs(best_params[i] - GLOBAL_PRIOR_RANGE[i][1])]
-
-
+        param_dict = perturb_around_likelihood(params = best_params, 
+                                               log_likelihood_func = lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss']), 
+                                               single_gauss = kwargs['single_gauss'])
+ 
         # Sometimes, sigma_1 is seen as the small contribution. For consistency we flip this and break the prior
         if param_dict['sigma_1'] < param_dict['sigma_2'] and kwargs['flip_sigmas']:
-
             rbin = kwargs['rbin']
-            tqdm.write(f' r {rbin[0]:.2f}-{rbin[1]:.2f}: SIGMA1 < SIGMA2, FLIPPING')
             #Switch sigma_1 and sigma_2 (and errors) and flip lambda to 1 - lambda (thus switching the errors)
             param_dict['sigma_1'], param_dict['sigma_2'] = param_dict['sigma_2'], param_dict['sigma_1']
             param_dict['errors'][0], param_dict['errors'][1] = param_dict['errors'][1], param_dict['errors'][0]
@@ -304,11 +359,21 @@ class ONEHALO_fitter:
                 else: 
                     plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
         
-        return param_dict, duration
+        if kwargs['timeit']: 
+            duration = time() - now
+            return param_dict, duration
+
+        return param_dict
         # return samples
 
     def fit_to_catalogued_bin(self, rbin: np.array, datapath: str, **kwargs):
         #datapath should go to massbin folder with hdf5 files
+
+        # only flip the sigmas if the argument
+        if f'r_{rbin[0]:.2f}-{rbin[1]:.2f}' not in kwargs['flip_bins']:
+            kwargs['flip_sigmas'] = False
+        else:
+            kwargs['flip_sigmas'] = True
     
         rpath = os.path.join(datapath, kwargs['r_unit'], f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
 
@@ -331,15 +396,19 @@ class ONEHALO_fitter:
         filename += f'/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 
         likelihood_func = mod_gaussian_log_likelihood
-        output, duration = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
+
+        output = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
                                                         filename = filename, rbin = rbin, **kwargs)
-        
-        with open('timing.txt', 'a') as tfile:
-            tfile.write(f'{self.lower_mass}-{self.upper_mass},{rbin[0]:.2f}-{rbin[1]:.2f},{duration}\n')
-            
+
+        # extra split needed if timed        
+        if kwargs['timeit']: 
+            output, duration = output
+            with open('timing.txt', 'a') as tfile:
+                tfile.write(f'{self.lower_mass}-{self.upper_mass},{rbin[0]:.2f}-{rbin[1]:.2f},{duration}\n')
+                
 
         if kwargs['verbose']:
-            print(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
+            tqdm.write(f'Radial bin {rbin[0]:.2f} - {rbin[1]:.2f} completed.')
 
         if kwargs['return_values']:
             result, err = output   
@@ -519,11 +588,6 @@ class ONEHALO_fitter:
 
 
 
-
-# def create_function_combinations(funclist): 
-#     func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
-#     return flatten(func_combis)
-
 class ONEHALO_joint_fitter:
     def __init__(self, PATH: str = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex', init_param_file: str = '/disks/cosmodm/vdvuurst/data/initial_params.json'):
         self.PATH = PATH
@@ -562,7 +626,6 @@ class ONEHALO_joint_fitter:
             for rbin in self.r_bins:
                 vel_data = self.data_dict[mbin][rbin]
                 
-
 
 
     def fit_to_data(self, function_combi: list, nwalkers: int = 10, nsteps: int = 500, **kwargs):

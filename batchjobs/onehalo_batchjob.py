@@ -1,14 +1,23 @@
+from time import time
+
+now = time()
+
+import sys
+if '/disks/cosmodm/vdvuurst' not in sys.path:
+    sys.path.append('/disks/cosmodm/vdvuurst')
+
+
 import os
 import numpy as np
-from ONEHALO import ONEHALO, ONEHALO_fitter
+from ONEHALO import ONEHALO_fitter
 from onehalo_plotter import format_plot
-import argparse
+from argparse import ArgumentParser
 from tqdm import tqdm
 from multiprocessing import Pool
 from functions import modified_logspace, rice_bins, mkdir_if_non_existent
 from itertools import product
 
-import warnings
+from warnings import filterwarnings
 
 # def fxn():
 #     # warnings.warn("RuntimeWarning: invalid value encountered in scalar subtract lnpdiff = f + nlp - state.log_prob[j]", RuntimeWarning)
@@ -17,12 +26,12 @@ import warnings
 # with warnings.catch_warnings(action="ignore"):
 #     fxn()
 
-#TODO: this might be a liiiitle dangerous but cleans up the output by a lot. find out if we can ignore the warning specified in fxn() above specifically
-warnings.filterwarnings('ignore',category = RuntimeWarning)
+# this might be a liiiitle dangerous but cleans up the output by a lot. that's because we often see invalid values in log10, but that's ok
+filterwarnings('ignore',category = RuntimeWarning)
 
 SOAP_PATH_DEFAULT = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOAP-HBT/halo_properties_0077.hdf5"
 
-parser = argparse.ArgumentParser()
+parser = ArgumentParser()
 # Mass parameters
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
 parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') 
@@ -43,12 +52,14 @@ parser.add_argument('-NS', '--num_steps', type = int, default = 250, help = 'Num
 
 #Efficiency controllers
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
-parser.add_argument('-MP', '--multiprocess', type = int, default = 1, help = '1 for multiprocessing; uses 1 core per mass bin, 0 for sequential. Default is 1.')
+parser.add_argument('-MP', '--multiprocess', type = int, default = 32, help = 'Number of cores to use for multiprocessing, 1 means sequential. Default is 32.')
 
 # Variants
 parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Will alter filename structure. Default is 0.')
 parser.add_argument('-SG', '--single_gauss', type = int, default = 0, help = 'Have the lambda be fixed to a value of 0 to emulate a single Gaussian. Default is 0.')
 parser.add_argument('-FS','--flip_sigmas', type = int, default = 0, help = 'If the sigma_1 parameter is smaller than the sigma_2 parameter after fitting, flip them and cast lambda to 1 - lambda. Default is 0.')
+parser.add_argument('-T', '--timeit', type = int, default = 0, help = 'Controls whether or not to time the process per bin and write to txt file. Default is 0.')
+
 
 args = parser.parse_args()
 
@@ -64,12 +75,14 @@ mkdir_if_non_existent(data_dir)
 
 # Set some args to bools
 overwrite = bool(args.overwrite)
-multiprocess = bool(args.multiprocess)
+multiprocess = bool(args.multiprocess > 1)
+NPROCS = args.multiprocess # and this one for clarity
 verbose = bool(args.verbose) and not multiprocess # set verbose to false during multiprocess
 loglambda = bool(args.loglambda)
 catalogued = bool(args.catalogued)
 single_gauss = bool(args.single_gauss)
 flip_sigmas = bool(args.flip_sigmas)
+timeit = bool(args.timeit)
 
 def create_kwargs(**kwargs):
     return kwargs
@@ -90,26 +103,41 @@ else:
         raise ValueError('This should not have happened, how did you get another radial unit?')
     create_range = True
 
-default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = args.r_bins, r_unit = r_unit, bins= rice_bins, bounds = [(50, 1000), (50, 1000), (0, 1)], plot= True,
+# hardcoded in here, these are the only bins we want to flip the sigmas for
+flip_bins = 'r_0.00-0.07'
+
+# create kwarg dictionary from default values and terminal input
+default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = args.r_bins, r_unit = r_unit, bins= rice_bins, plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
-                            return_values = False, loglambda = loglambda, single_gauss = single_gauss, flip_sigmas = flip_sigmas)
+                            return_values = False, loglambda = loglambda, single_gauss = single_gauss, flip_sigmas = flip_sigmas,
+                            flip_bins = flip_bins, timeit = timeit)
 
 
 def _create_iterable_input(**kwargs):
-    fitters = []
+    """ 
+        Given a set of kwargs, create iterable input that imap_unordered can handle.
+    Returns:
+        list: list of lists, each containing a ONEHALO_fitter object, a massbin, optionally a radial bin and a set of kwargs.
+    """
+
     if create_range:
         r_range = modified_logspace(kwargs['r_start'], kwargs['r_stop'], kwargs['r_steps']) 
     else:
         r_range = (kwargs['r_start'], kwargs['r_stop'])
     
+    # set up the radial bins in the right format
     kwargs['rbins'] = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)])
 
-    for mass_bin in mass_bins:
+    # we need a fitter object for every mass bin
+    fitters = []
+    for i,mass_bin in enumerate(mass_bins):
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir, filename)
 
-        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'])
+        #create fitter objects to use. Only need it to load in data if we use 
+        # non-catalogued data (i.e. we need to calculate the radial bin masks within the function)
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'], load = not catalogued)
 
         fitters.append(fitter)
 
@@ -140,10 +168,14 @@ if multiprocess:
     # all kwargs given here explicitly will be passed on to ONEHALO_fitter.fit_to_radial_bins() 
     iterable_input = _create_iterable_input(method = args.method.lower(), mass_bins = mass_bins, **default_kwargs)
 
-    if not catalogued:
+    if not catalogued and multiprocess:
         NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
-    else: # for the catalogued data we also parallelize on radial bins
-        NPROCS = 32
+    # else: # for the catalogued data we also parallelize on radial bins
+    #     NPROCS = 32
+
+    overhead = time() - now
+
+    print(f'OVERHEAD WAS {overhead:.3f} seconds.')
 
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
         for _ in p.imap_unordered(_run_experiment_radial_bins, iterable_input):
