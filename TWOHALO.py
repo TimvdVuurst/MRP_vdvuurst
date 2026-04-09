@@ -6,8 +6,7 @@ from tqdm import tqdm
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from scipy.stats import skew, kurtosis
-from subsample import *
-
+from supplementary.subsample import *
 
 def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
     return (10**m_min <= mass) & (mass <= 10**m_max) # base 10 since FOF masses aren't in units of 10^10 Msol
@@ -315,6 +314,8 @@ def parse_args():
     return parser.parse_args()
 
 if __name__ == '__main__':
+    from twohalo_plotting import format_plot
+
     args = parse_args()
 
     twohalo = TWOHALO(args.path, '/disks/cosmodm/vdvuurst/data/twohalotest_13.5-14_14.5-15.hdf5')

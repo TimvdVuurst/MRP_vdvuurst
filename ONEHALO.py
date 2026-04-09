@@ -5,8 +5,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 from functions import *
-from onehalo_plotter import plot_distribution_gaussian_mod
-from json import load, dump
+from onehalo_plotter import plot_distribution_gaussian_mod, format_plot
+from json import dump
 import emcee
 from corner import corner
 from functional_forms import * # also runs some code to create the functional_form catalogue in the all_combis variable
@@ -15,6 +15,21 @@ from time import time
 #TODO: expand accordingly
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
 
+def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
+    if m_min in [0,-1,np.nan, None]:
+        return (mass <= 10**m_max)
+    elif m_max in [0,-1,np.nan, None]:
+        return (10**m_min <= mass)
+    return (10**m_min <= mass) & (mass <= 10**m_max) 
+
+def _make_radial_mask(radii: np.ndarray, r_min: np.float32, r_max: np.float32) -> np.ndarray:
+    return (r_min <= radii) & (r_max >= radii)
+
+def str_from_mbin(mbin):
+    return f'M_1{mbin[0]}-1{mbin[1]}'
+
+def str_from_rbin(rbin):
+    return f'r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 
 class ONEHALO:
     def __init__(self, PATH: str):
@@ -37,23 +52,16 @@ class ONEHALO:
         # ~IsCentral picks out sattelites, this picks out all centrals !that host sattelites! and how many sattelites they host
         self.HostHaloIDs, self.subhalos_per_host_tot = np.unique(self.HostHaloIndex[~self.IsCentral], return_counts = True) 
 
-    @staticmethod
-    def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
-        if m_min in [0,-1,np.nan, None]:
-            return (mass <= 10**m_max)
-        elif m_max in [0,-1,np.nan, None]:
-            return (10**m_min <= mass)
-        return (10**m_min <= mass) & (mass <= 10**m_max) 
-
-    def create_full_dataset(self, mass_range: Tuple[np.float32,np.float32], filename: str, r_max: np.float32 = 2.5):
+    def create_full_dataset(self, mass_range: Tuple[np.float32,np.float32], filename: str, r_max: np.float32 = 2.5, verbose = False):
         """ Create a full catalogue of halo mass, relative velocities and positions in a given mass range (so NOT binning!).
 
         Args:
             mass_range (Tuple[np.float32,np.float32]): Massbin in units of 10^10 Msol. Lower, upper.
             filename (str): string specifying the full path to which the data is saved (must end on .hdf5)
+            r_max (float) : maximum radius to allow. Defualts to 2.5
         """
         lower_mass, upper_mass = mass_range
-        mass_mask = self._make_mass_mask(self.SOMass, lower_mass, upper_mass) #functions as a central mask implicitly
+        mass_mask = _make_mass_mask(self.SOMass, lower_mass, upper_mass) #functions as a central mask implicitly
         
         # halo_masses = self.SOMass[mass_mask] # get all the masses
         
@@ -65,37 +73,50 @@ class ONEHALO:
         subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask]
         HostIndices = self.HostHaloIDs[Relevant_Hosts_mask] # This now replaces the previous HostIndices
 
-        SatteliteMask = np.isin(self.HostHaloIndex, HostIndices) #pick out all the sattelites from relevant hosts
+        SatteliteMask = np.isin(self.HostHaloIndex, HostIndices) # Pick out all the sattelites from relevant hosts
+
+        if verbose: print('Sattelites found')
 
         # Get the host COM pos, vel and mass, same for sattelites
         HostCOMs, HostVels = self.COM[HostIndices], self.COMvelocity[HostIndices]
         HostMasses = self.SOMass[HostIndices]
-        SatSorter = np.argsort(self.HostHaloIndex[SatteliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
 
- 
+        SatSorter = np.argsort(self.HostHaloIndex[SatteliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
         SatCOMs, SatVels = self.COM[SatteliteMask][SatSorter], self.COMvelocity[SatteliteMask][SatSorter]
-        
+        if verbose: print('Sattelites sorted')
+
         # Get the virial radii for all sattelites in order
         self.SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
-
         relative_COMs = SatCOMs - np.repeat(HostCOMs, subhalos_per_host, axis = 0)
         relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
-
         
         # Get the virial radii for all sattelites in order
         SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
         rel_dist = np.sqrt(np.square(relative_COMs).sum(axis = 1)) / SatRvirs # Calculate the distance from coordinates and set in units of virial radius
-
         HostMasses = np.repeat(HostMasses, subhalos_per_host, axis = 0)
+
+        if verbose: print('All sattelite data found, applying masks...')
 
         radial_mask = rel_dist < r_max # We set a maximum distance, beyond this we do not consider it to be an effect of the one halo term
 
+        # Apply radial mask
+        relative_COMs = relative_COMs[radial_mask]
+        rel_dist = rel_dist[radial_mask]
+        relative_vels = relative_vels[radial_mask, :]
+        HostMasses = HostMasses[radial_mask]
+
+        # Some datapoints have such velocities as to incur overflow errors (exponential of -0.5v is returned as 0), so we prune those
+        # HOWEVER we prune it in such a way that the entire velocity vector is thrown, otherwise we get a lot of issues later on
+        # TODO: verify with Marcel that this is ok
+        # usable_mask = np.full_like(HostMasses, True, dtype = bool)
+        usable_mask = np.invert(np.any(np.exp((-0.5 * np.square(relative_vels)) / (2 * np.min((GLOBAL_PRIOR_RANGE[0][1], GLOBAL_PRIOR_RANGE[1][1]))**2)) == 0, axis = 1))
+        if verbose: print(f'There are {usable_mask.sum()} usuable velocity vectors, that is {usable_mask.sum()/HostMasses.size * 100:.1f}%, removing the rest...')
 
         with h5py.File(filename, 'w') as file:
-            file.create_dataset('rel_pos', data  = relative_COMs[radial_mask], dtype = np.float32)
-            file.create_dataset('rel_dist', data = rel_dist[radial_mask], dtype = np.float32)
-            file.create_dataset('rel_vels', data  = relative_vels[radial_mask], dtype = np.float32)
-            file.create_dataset('mass', data = HostMasses[radial_mask], dtype = np.float32)
+            file.create_dataset('rel_pos', data  = relative_COMs[usable_mask], dtype = np.float32)
+            file.create_dataset('rel_dist', data = rel_dist[usable_mask], dtype = np.float32)
+            file.create_dataset('rel_vels', data  = relative_vels[usable_mask, :], dtype = np.float32)
+            file.create_dataset('mass', data = HostMasses[usable_mask], dtype = np.float32)
 
     
     def create_catalogue(self, massbin: Tuple[np.float32,np.float32], filename: str):
@@ -110,7 +131,7 @@ class ONEHALO:
 
         # Select the relevant mass range, since the lowest is 10**12 Msol and particle mass is 10^9 
         # we do not need to explicitly filter for number of particles, it will always be at least 1000
-        mass_mask = self._make_mass_mask(self.SOMass, self.lower_mass, self.upper_mass) #functions as a central mask implicitly
+        mass_mask = _make_mass_mask(self.SOMass, self.lower_mass, self.upper_mass) #functions as a central mask implicitly
         self.mass_mask = mass_mask
         HostIndices = self.HaloIndices[mass_mask] #if it has non-zero mass it must be a central
         
@@ -153,7 +174,7 @@ class ONEHALO:
                 lower_mass, upper_mass = os.path.split(mass_filename)[1].split('.hdf5')[0].split('M_')[1].split('-')
                 lower_mass, upper_mass = float(lower_mass) -10., float(upper_mass) -10. # -10. because of units
 
-                mass_mask = self._make_mass_mask(self.SOMass, lower_mass, upper_mass) #functions as a central mask implicitly
+                mass_mask = _make_mass_mask(self.SOMass, lower_mass, upper_mass) #functions as a central mask implicitly
 
                 HostIndices = self.HaloIndices[mass_mask] #if it has non-zero mass it must be a central                
                 # From the catalogue of sattelite hosting haloes, select only those we know actually HAVE subhaloes and thus are relevant for this dataset
@@ -176,7 +197,6 @@ class ONEHALO:
 
         with h5py.File(rad_filename, 'w') as file:
             file.create_dataset('rel_vels', data = masked_data, dtype = np.float32)
-
 
 class ONEHALO_fitter:
     def __init__(self, PATH: str, initial_param_file: str = None, loglambda: bool = False, load: bool= False):
@@ -272,7 +292,6 @@ class ONEHALO_fitter:
  
         # Sometimes, sigma_1 is seen as the small contribution. For consistency we flip this and break the prior
         if param_dict['sigma_1'] < param_dict['sigma_2'] and kwargs['flip_sigmas']:
-            rbin = kwargs['rbin']
             #Switch sigma_1 and sigma_2 (and errors) and flip lambda to 1 - lambda (thus switching the errors)
             param_dict['sigma_1'], param_dict['sigma_2'] = param_dict['sigma_2'], param_dict['sigma_1']
             param_dict['errors'][0], param_dict['errors'][1] = param_dict['errors'][1], param_dict['errors'][0]
@@ -587,98 +606,193 @@ class ONEHALO_fitter:
             self._fit_to_non_catalogued_radial_bins(**kwargs)
 
 
-
 class ONEHALO_joint_fitter:
-    def __init__(self, PATH: str = '/disks/cosmodm/vdvuurst/data/OneHalo_0.5dex', init_param_file: str = '/disks/cosmodm/vdvuurst/data/initial_params.json'):
+    def __init__(self, 
+                 PATH: str = '/disks/cosmodm/vdvuurst/data/Onehalo_M_12-15.5_subsampled.hdf5',
+                 init_condition_path: str = '/disks/cosmodm/vdvuurst/data/onehalo_joint_initial_conditions'
+                 ):
         self.PATH = PATH
+        self.init_condition_path = init_condition_path
 
-        # with open(init_param_file, 'r') as f:
-        #     self.init_param_dict = load(f)
+        with h5py.File(self.PATH) as handle:
+            self.halo_masses = handle['mass'][:]
+            self.rel_vels = handle['rel_vels'][:]
+            self.rel_dist = handle['rel_dist'][:]
+        
+        # pre calculate this
+        self.min_half_v_sq_arr = -0.5 *np.square(self.rel_vels) 
 
-        # TODO: hardcoded now, make function argument
-        mass_edges = [12 + 0.5*i for i in range(8)]
-        self.massbins = [f'M_{mass_edges[m]}-{mass_edges[m+1]}' for m in range(len(mass_edges)-1)]
+        self.Ndata = self.rel_vels.shape[0] # Take the 0 of the shape since shape[1] = 3 (3 indep. velocity points per datum)
 
-        #TODO: same as above
-        r_range = modified_logspace(0, 2.5, 20)
-        self.r_bins = [f'{r_range[i]:.2f}-{r_range[i+1]:.2f}' for i in range(len(r_range)-1)]
-
-        self.data_dict = {m:{r:[] for r in self.r_bins} for m in self.massbins}
-        # Load in the data for all mass- and radial bins
-        for mbin in self.massbins:
-            for rbin in self.r_bins:
-                path_to_data = os.path.join(self.PATH, mbin, 'Rvir', 'r_'+ rbin + '.hdf5')
-                with h5py.File(path_to_data, 'r') as handle:
-                    # rel_pos = handle['rel_pos'][:]
-                    rel_vels = handle['rel_vels'][:]
-                
-                # Some calculations to store for marginal speed-up in the MCMC process
-                # rel_sq_dist = np.square(rel_pos).sum(axis = 1)
-                
-                # self.data_dict[mbin]['rel_sq_dist'] = rel_sq_dist
-                self.data_dict[mbin][rbin] = rel_vels
-
-    def joint_likelihood(self, params: list, r_func: list, m_funcs: list, n_params_r: list, n_params_m: list):
-        # lambda_
-        # Can this be vectorized?
-        L = 0
-        for mbin in self.massbins:
-            for rbin in self.r_bins:
-                vel_data = self.data_dict[mbin][rbin]
-                
-
-
-    def fit_to_data(self, function_combi: list, nwalkers: int = 10, nsteps: int = 500, **kwargs):
-        # lambda_combi, sigma1_combi, sigma2_combi = function_combi
+    @staticmethod
+    def param_info(function_combi):
+        # Generate parameter information lists (pointers) given a function combination
         n_params_r = []
-        n_params_m = [[], [], []]
-        for i,param_combi in enumerate(function_combi):
-            r_function, m_parametrizations = param_combi # unpack the function combination for this specific parameter
+        n_params_m = [] # every list is for a double gauss parameter, containing a number of parameters needed to parametrize an r-parameter in terms of M for every r-parameter
+        for param_combi in function_combi:
+            _, m_parametrizations = param_combi # unpack the function combination for this specific parameter
             n_params_r.append(len(m_parametrizations))
-            n_params_m[i] = [len(signature(m_func).parameters) - 1 for m_func in m_parametrizations]
+            n_params_m.append([len(signature(m_func).parameters) - 1 for m_func in m_parametrizations])
+
+        n_params_m = flatten(n_params_m)
+
+        return n_params_r, n_params_m, sum(n_params_m)
+
+    @staticmethod
+    def split_parameters(params, n_params_m):
+        # Split array of parameters into jagged array to be used with pointers
+        return np.split(params, np.cumsum(n_params_m)[:-1]) 
+
+    def get_double_gauss_parameters(self, split_params, function_combi, n_params_r,
+                                    halo_masses = None, rel_dist = None):
+        # Add so that we can also use this function for subsets of the data
+        if halo_masses is None:
+            halo_masses = self.halo_masses
+        if rel_dist is None:
+            rel_dist = self.rel_dist
+
+        r_pointers = np.concat(([0],np.cumsum(n_params_r))) # indexers for the r parameters
         
-        n_params = sum(flatten(n_params_m))
+        #TODO: do I want to move this outside? to save time on initializing this every time
+        double_gauss_params = np.zeros((3, halo_masses.size), dtype = np.float32)
 
-        return n_params_r, n_params_m
+        for i in range(3): # iterate over double gauss parameters
+            # Isolate the r_function for the given DG parameter and the functions of M that paramettrize that further
+            param_r_func, param_m_funcs = function_combi[i] 
 
-        # #TODO: tweak based on results and see if it can be made function specific
-        # init_pos = np.random.uniform(low = [-1000 for _ in range(n_params)], high = [1000 for _ in range(n_params)], size = (nwalkers, n_params))
+            # Get the parameter values for the function of r (by applying the mass functions). Has shape (N_{rparams}, Ndata)
+            parameters_for_r_func = [param_m_funcs[k](halo_masses, *split_params[j]) for k,j in enumerate(range(r_pointers[i], r_pointers[i+1]))]
 
-        # sampler = emcee.EnsembleSampler(nwalkers, n_params, self.joint_likelihood, args = (self.data_dict))
-        # sampler.run_mcmc(init_pos, nsteps, progress = kwargs['verbose'])
+            # Now apply those parameter values for all distances. Returns array of shape Ndata
+            param_values = param_r_func(rel_dist, *parameters_for_r_func) 
+            double_gauss_params[i] = param_values
 
+        return double_gauss_params
+    
+    def get_joint_likelihood(self, params, n_params_m, n_params_r, function_combi):
+        # TODO make function input? idk if that fucks with mcmc, i think it does
+        split_params = self.split_parameters(params, n_params_m)
         
-
+        # Update DG parameters from parameter set
+        DG_params = self.get_double_gauss_parameters(split_params, function_combi, n_params_r)
         
-    #     init_guess, param_names = np.array(list(initial_guess.values())), list(initial_guess.keys()) 
-    #     ndim = init_guess.shape[0]
+        # Calculate the likelihood of the data + parameter set
+        L = mod_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
+
+        return L
+
+    #WRAPPER
+    def fit_function_combi_to_data(self, function_combi: list, function_combi_names: list, combi_number: int,
+                                    nwalkers: int = 50, nsteps: int = 500,
+                                    filepath: str = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/joint_subsample',
+                                    **kwargs) -> None:
+        n_params_r, n_params_m, ndim = self.param_info(function_combi)
+
+        #read in initial conditions and mcmc step sizes form pre-ran conditions (see ONEHALO_initial_conditions.py)
+        #and add small amount of noise for every walker
+        initial_params, MCMC_scales = np.load(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.npy'))
+        noise = np.random.normal(0, MCMC_scales, size = (nwalkers, MCMC_scales.size))
+        initial_params = initial_params[np.newaxis, :] + noise
+
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, self.get_joint_likelihood,
+                                         args = (n_params_m, n_params_r, function_combi))
+        sampler.run_mcmc(initial_params, nsteps, progress = kwargs['verbose'])
+        
+        samples = sampler.get_chain()
+        likelihoods = sampler.get_log_prob()
+        best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape)
+        best_likelihood = likelihoods[best_arg]
+        best_params = np.array([samples[*best_arg, i] for i in range(ndim)])
+       
+        #TODO: update perturb param function to work for joint model
+
+        BIC_score = BIC(best_likelihood, self.Ndata, ndim)
+
+        # Create dict of all relevant information of the fit
+
+        param_dict = {'parameters':list(best_params), 'likelihood':best_likelihood,
+                       'BIC':BIC_score, 'functional_form':function_combi_names,
+                       'nwalkers': nwalkers, 'nsteps': nsteps}
+    
+        # Save best parameter dictionary
+        with open(os.path.join(filepath, f'function_combi_{combi_number}'), 'w') as f:
+            dump(param_dict, f, indent = 1)
+
+        if kwargs['plot']:
+            fpath_for_plot = '/disks/cosmodm/vdvuurst/figures/onehalo_joint/subsampled' if 'subsampled' in filepath else '/disks/cosmodm/vdvuurst/figures/onehalo_joint'
+            self.plot_in_bin(best_params, function_combi, combi_number, n_params_r, n_params_m,
+                            BIC_score, kwargs['mbin'], kwargs['rbin'], show = kwargs['show_plot'],
+                            filepath = fpath_for_plot)
 
 
+    def plot_in_bin(self, best_params: np.ndarray, function_combi: list, combi_number: int,
+                    n_params_r: int, n_params_m: list,
+                    BIC_score: np.float32, mbin: list | tuple, rbin: list | tuple, show: bool = False,
+                    filepath: str = '/disks/cosmodm/vdvuurst/figures/onehalo_joint/subsampled') -> None:
+        
+        # Define the bin
+        mbin_mask = _make_mass_mask(self.halo_masses, *mbin)
+        rbin_mask = _make_radial_mask(self.rel_dist, *rbin)
+        bin_mask = np.logical_and(mbin_mask, rbin_mask)
 
-    ## Below is wrong, since these are initial parameters based ONLY on r. I have no idea where the real ballpark
-    ## is, so just try smth out and we'll see how it goes. Same with the priors.
-    # def _get_init_params(self, function_name: str):
-    #     match function_name.lower():
-    #         case 'power_linear':
-    #             return np.array([self.init_param_dict[x] for x in ['p', 'n', 'q', 'b']])
-    #         case 'linear':
-    #             return np.array([self.init_param_dict[x] for x in ['m', 'c']])
-    #         case 'exponential':
-    #             return np.array([self.init_param_dict[x] for x in ['A', 'B', 'C']])
-    #         case 'exponential_squared':
-    #             return np.array([self.init_param_dict[x] for x in ['A', 'B', 'C']])
-    #         case 'power_law':
-    #             return np.array([self.init_param_dict[x] for x in ['p', 'n', 'q']])
-    #         case 'constant':
-    #             return 400.
-    #         case 'parabola':
-    #             return np.hstack(([1], np.array([self.init_param_dict[x] for x in ['m', 'c']])))
-    #         #the three below empircally deduced to work decently
-    #         case 'inverse':
-    #             return np.array([1., 0.2])
-    #         case 'poly_3':
-    #             return np.array([10, -50, 100, 50])
-    #         case 'poly_4':
-    #             return np.array([10, -50, 100, 0.5, 10])
+        # Get binned data
+        vel_data_in_bin = self.rel_vels[bin_mask].flatten() # first apply mask to all 3-vectors, then flatten
+        min_half_v_sq_in_bin = self.min_half_v_sq_arr[bin_mask]
+        masses_in_bin = self.halo_masses[bin_mask]
+        rel_dist_in_bin = self.rel_dist[bin_mask]
 
-    #     raise ValueError(f"{function_name} not recognized, select a valid function.")
+        bins = rice_bins(vel_data_in_bin.size)
+        filename = os.path.join(filepath, f'function_combi_{combi_number}')
+        mkdir_if_non_existent(filename)
+        filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.png')
+
+        DG_params = self.get_double_gauss_parameters(self.split_parameters(best_params, n_params_m), function_combi,
+                                                      n_params_r, masses_in_bin, rel_dist_in_bin)
+
+        # Plotting
+        fig, ax = plt.subplots(figsize = (7,7))
+        ax.set_xlabel('Velocity difference v', fontsize=16)
+        ax.set_ylabel('Number of galaxies per v', fontsize=16)
+        ax.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
+
+        # Bin velocity histogram and plot it
+        bin_heights, bin_edges = np.histogram(vel_data_in_bin, bins=bins, density=False)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        bin_width= bin_edges[1] - bin_edges[0] 
+        bin_widths = np.diff(bin_edges)  # The width of each bin
+        number_density = bin_heights / bin_widths  # Normalize by bin width
+        hist_area=np.sum(bin_heights)
+        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black')
+
+        # Add BIC score in textbox
+        ax.text(0.155, 0.83, f'BIC = {BIC_score:.2e}', transform=plt.gcf().transFigure,
+                backgroundcolor='white',zorder=-1,
+                bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
+        
+        # Plot fitted distribution
+        sigma_1_sq, sigma_2_sq = 2 * np.square(DG_params[0]), 2 * np.square(DG_params[1])
+        one_min_lambda = 1 - DG_params[2]
+
+        norm = 1 / (((one_min_lambda * DG_params[0]) + (DG_params[2] * DG_params[1]))* np.sqrt(2 * np.pi)) 
+
+        # ax.plot(vel_data_in_bin, hist_area*mod_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda),
+        #         '-', label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
+        #         color='red')
+        DAT = np.linspace(np.min(vel_data_in_bin),np.max(vel_data_in_bin), min_half_v_sq_in_bin.size).reshape(min_half_v_sq_in_bin.shape)
+
+        plot_data =  hist_area * mod_gaussian_vec_for_plot(-0.5*np.square(DAT), sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm)
+        print(plot_data)
+        ax.plot(vel_data_in_bin, plot_data, '-', label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
+                color='red')
+        
+        # ax.scatter(DAT, hist_area* mod_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm),
+        #             label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
+        #             color='red')
+
+        ax.legend(fontsize=12.5, loc="upper right")
+        
+        if not show:
+            fig.savefig(filename, dpi=200)
+            plt.close()
+        else:
+            plt.show()

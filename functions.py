@@ -6,7 +6,7 @@ from typing import Callable
 import os
 
 # sigma_1, sigma_2, lambda
-GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]]
+GLOBAL_PRIOR_RANGE = [[5., 1500.], [5., 1500.], [0., 0.5]]
 
 ## FUNCTIONS FOR ONEHALO LIKELIHOODS
 
@@ -89,7 +89,6 @@ def mod_gaussian_log_likelihood(params, data, loglambda, single_gauss): #full wi
 
     mu_func = mod_gaussian_loglambda if loglambda else mod_gaussian
     mu_i = mu_func(data, *params)
-    # mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise
     return np.sum(np.log10(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
 
 def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
@@ -120,7 +119,84 @@ def mod_gaussian_neg_log_likelihood(params, data):
     fit_integral = 1. #verified
 
     return -1 * np.sum(np.log(mod_gaussian(data, sigma1, sigma2, lambda_))) + fit_integral
+
+#### VECTORIZED LOG(L) functions
+def log_prior_vec(theta):
+    # VECTORIZED this works well and is quick
+    sigma_1, sigma_2, lambda_ = theta
     
+    if None in GLOBAL_PRIOR_RANGE[0]: # sigma_1 must be larger than sigma_2
+        sigma_1_prior = sigma_2 < sigma_1 <= GLOBAL_PRIOR_RANGE[0][1]
+    else:
+        sigma_1_prior = (GLOBAL_PRIOR_RANGE[0][0] <= sigma_1) * (sigma_1 <= GLOBAL_PRIOR_RANGE[0][1])
+    
+    if None in GLOBAL_PRIOR_RANGE[1]: #sigma_2 must be smaller than sigma_1
+        sigma_2_prior = GLOBAL_PRIOR_RANGE[1][0] <= sigma_2 < sigma_1
+    else:
+        sigma_2_prior = (GLOBAL_PRIOR_RANGE[1][0] <= sigma_2) * (sigma_2 <= GLOBAL_PRIOR_RANGE[1][1])
+    
+    lambda_prior = (GLOBAL_PRIOR_RANGE[2][0] <= lambda_) * (lambda_ <= GLOBAL_PRIOR_RANGE[2][1])
+
+    cond = np.logical_and(np.logical_and(sigma_1_prior, sigma_2_prior),lambda_prior)
+    prior = np.where(cond, 0,-np.inf)
+
+    # so that it can also be used unvectorized if we want
+    if theta.size == 3:
+        return np.float32(prior)
+    return prior
+
+def mod_gaussian_vec(min_half_v_sq, sigma1_sq, sigma2_sq, lambda_, one_min_lambda): 
+    #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
+    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
+    p = 0
+    for i in range(3): # loop over all vx, then vy then vz. We do it like this to reconcile the shape difference (Ngal = shape(Vi))
+        p += np.sum(np.log((one_min_lambda * np.exp(min_half_v_sq[:,i] / sigma1_sq) + #TODO: pre-calculate inverses to reduce operations further 
+                             lambda_ * np.exp(min_half_v_sq[:,i] / sigma2_sq)))) # take the log so we can sum
+    return p 
+
+def mod_gaussian_vec_for_plot(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda, norm): 
+    #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
+    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
+    p = np.zeros_like(min_half_v_sq)
+    for i in range(3): # loop over all vx, then vy then vz. We do it like this to reconcile the shape difference (Ngal = shape(Vi))
+        p[:,i] += norm * (one_min_lambda * np.exp(min_half_v_sq[:,i] * sigma1_sq_inv) +\
+                             lambda_ * np.exp(min_half_v_sq[:,i] * sigma2_sq_inv)) 
+    return p.flatten()
+
+def log_mod_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda):
+    #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
+    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
+    p = 0
+    min_half_v_sq_sigma_1 = min_half_v_sq * sigma1_sq_inv[:, np.newaxis]
+    min_half_v_sq_sigma_2 = min_half_v_sq * sigma2_sq_inv[:, np.newaxis]
+    # Broadcast to match the shapes
+    p = np.sum(min_half_v_sq + np.log(one_min_lambda[:, np.newaxis] + lambda_[:, np.newaxis] * np.exp(min_half_v_sq_sigma_2 - min_half_v_sq_sigma_1)))
+    return p
+
+def mod_gaussian_log_likelihood_vec(params, data, single_gauss = False): #full with prior
+    lp = log_prior_vec(params) # vectorized prior
+    prior_mask = np.isfinite(lp)
+
+    # if single_gauss: params[-1] = 0 #TODO: fix? vectorize somehow? easy enough to do with slicing like 2::3
+
+    #TODO: globalize for reduced operations? 
+    prior_data = data[prior_mask]
+
+    # TODO: these can be taken outside of this function as well probably when implementing in MCMC
+    # unnecessary to calculate these every time in the loop below (i.e. every time mod_gaussian_vec is called) since the parameter values stay the same
+    sigma1, sigma2, lambda_ = params[:, prior_mask]
+    norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)* np.sqrt(2 * np.pi)) # independent of v, so move here
+    sigma1_sq_inv = 1 / (2 * sigma1**2)
+    sigma2_sq_inv = 1 / (2 * sigma2**2)
+    one_min_lambda = 1 - lambda_
+
+    mu = log_mod_gaussian_vec(prior_data, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
+    L = mu + np.sum(np.log(norm))
+    
+    return L
+
+
+
 # GOODNESS OF FIT STATISTICS (OUTDATED)
 def _Gstat(O,E):
     """G-test statistic.
@@ -177,103 +253,6 @@ def get_Gstat(param_dict, bin_heights, bin_edges, integral_func = mod_gaussian_i
     return _Gstat(bin_heights, model) 
 
 
-# TODO: i think delete
-def ddsigma1_likelihood(v, sigma_1, sigma_2, lambda_):
-    numerator = (
-        np.exp(-(v**2 * (sigma_1**2 + sigma_2**2)) / (2 * sigma_1**2 * sigma_2**2))
-        * (-1 + lambda_)
-        * (
-            np.exp(v**2 / (2 * sigma_1**2)) * sigma_1**3 * lambda_
-            + np.exp(v**2 / (2 * sigma_2**2))
-            * (
-                -sigma_1**3 * (-1 + lambda_)
-                + v**2 * (sigma_1 * (-1 + lambda_) - sigma_2 * lam)
-            )
-        )
-    )
-
-    denominator = (
-        np.sqrt(2 * np.pi)
-        * sigma_1**3
-        * (-sigma_1 * (-1 + lambda_) + sigma_2 * lambda_) ** 2
-    )
-
-    return numerator / denominator
-
-def ddsigma2_likelihood(v, sigma_1, sigma_2, lambda_):
-    numerator = (
-        lambda_
-        * (
-            np.exp(-v**2 / (2 * sigma_1**2)) * (-1 + lambda_)
-            + (
-                np.exp(-v**2 / (2 * sigma_2**2))
-                * (-sigma_2**3 * lambda_ + v**2 * (sigma_1 - sigma_1 * lambda_ + sigma_2 * lambda_))
-            )
-            / sigma_2**3
-        )
-    )
-
-    denominator = (
-        np.sqrt(2 * np.pi)
-        * (sigma_1 - sigma_1 * lambda_ + sigma_2 * lambda_) ** 2
-    )
-
-    return numerator / denominator
-
-def ddlambda_likelihood(v, sigma_1, sigma_2, lambda_):
-    numerator = (
-        np.exp(-(v**2 * (sigma_1**2 + sigma_2**2)) / (2 * sigma_1**2 * sigma_2**2))
-        * (
-            np.exp(v**2 / (2 * sigma_1**2)) * sigma_1
-            - np.exp(v**2 / (2 * sigma_2**2)) * sigma_2
-        )
-    )
-
-    denominator = (
-        np.sqrt(2 * np.pi)
-        * (-sigma_1 * (-1 + lambda_) + sigma_2 * lambda_) ** 2
-    )
-
-    return numerator / denominator
-
-
-
-
-    # Then estimating the error bounds
-    # L_ratio_func = lambda x: (log_likelihood_func(x) / L_best) - 1.01
-    
-    ### OLD and inefficient
-
-    # while L_current >= L_thresh:
-    #     # Save previous value
-    #     previous_param_value = perturbed_params[param_idx]
-    #     L_previous = L_current
-    #     # Step parameter
-    #     perturbed_params[param_idx] += dir * step
-    #     L_current = log_likelihood_func(perturbed_params)
-
-    #     if not np.isfinite(L_current):
-    #         # Assume the previous step was the best we could get within prior range
-    #         # so return the relevant prior bound as the value
-    #         prior_idx = 0 if dir == -1 else 1
-    #         return prior_ranges[param_idx][prior_idx], params
-
-    #     # It might be that we step further into a maximum, in that case update the likelihood and parameter values accordingly
-    #     if L_current > L_best:
-    #         L_best = L_current
-    #         L_thresh = 1.01 * L_best # so that we know to perturb around this new maximum
-    #         params = np.copy(perturbed_params)
-        
-
-    # thresh is not precisely halfway between the points, 
-    # # this is more accurate but still assumes linearity
-    # y = L_current - L_thresh
-    # x = L_thresh - L_previous
-    # a = (y + x) / (perturbed_params[param_idx] - previous_param_value)
-    # b = L_thresh - x - a * previous_param_value
-    # param_bound = (L_thresh - b) / a
-
-
 ### FOR PERTURBING AROUND THE OPTIMUM FROM MCMC
 def sample_for_brent(params, found_likelihood, log_likelihood_func, single_gauss = False, threshold = 1.01):
     if single_gauss:
@@ -324,7 +303,6 @@ def sample_for_brent(params, found_likelihood, log_likelihood_func, single_gauss
         bounds[param_idx] = [param_down, param_up]
     
     return bounds
-
 
 def _perturb_params(params: np.array, log_likelihood_func: Callable[[np.array], float], single_gauss: bool = False, threshold: float = 1.01):
     """ Perturb parameter value, either upwards or downwards, and return parameter value when likelihood threshold is reached.
@@ -481,6 +459,8 @@ def modified_logspace(start, stop, num, base = 10):
 
 def BIC(L, n, k = 3):
     #L is assumed already as a logarithm and as a MAXIMUM
+    #n : no data points
+    #k: no parameters
     return (k * np.log(n)) - 2 * L
 
 def mkdir_if_non_existent(path):

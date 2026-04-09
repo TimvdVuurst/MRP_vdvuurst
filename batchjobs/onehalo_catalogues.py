@@ -12,7 +12,7 @@ from functions import modified_logspace, mkdir_if_non_existent
 SOAP_PATH_DEFAULT = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOAP-HBT/halo_properties_0077.hdf5"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-C','--catalogue', type = str, default = 'rad',  help = 'Select whether to create mass, radial or both catalogues. Defaults to radial.')
+parser.add_argument('-C','--catalogue', type = str, default = 'rad',  help = 'Select whether to create mass, radial or both catalogues. Both means mass and radial catalogues. Defaults to radial.')
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
 parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') #always EXCLUSIVE upper bound
 
@@ -30,14 +30,25 @@ args = parser.parse_args()
 
 choice = args.catalogue.lower()
 if choice == 'radius': choice = 'rad'
-choices = ['mass','rad', 'radius', 'both']
+choices = ['full', 'mass','rad', 'radius', 'both']
 if choice not in choices:
-    raise ValueError(f'Catalogue type "{choice}" not recognized. Choose from {*choices,} (not caps sensitive).')
+    raise ValueError(f'Catalogue type "{choice}" not recognized. Choose from {*choices,} (not caps sensitive). Both means mass and radial catalogues.')
 
 r_unit = args.rad_unit
 r_unit = r_unit[0].upper() + r_unit[1:].lower() #typeset
 
-
+if args.lower_radius and args.upper_radius:
+    lr = float(args.lower_radius)
+    ur = float(args.upper_radius)
+else:
+    lr = 0.
+    if r_unit == 'Mpc':
+        ur = 5.
+    elif r_unit == 'Rvir':
+        ur = 2.5 
+    else:
+        raise ValueError('This should not have happened, how did you get another radial unit?')
+        
 mass_range = np.arange(args.lower_mass, args.upper_mass + args.step, args.step).astype(np.float32)
 mass_bins = np.array([[mass_range[i],mass_range[i+1]] for i in range(len(mass_range)-1)])
 
@@ -61,18 +72,6 @@ def create_mass_catalogue(mass_bin, mass_filename, mass_filepath):
 
 def create_rad_catalogue(mass_filename):
     
-    if args.lower_radius and args.upper_radius:
-        lr = float(args.lower_radius)
-        ur = float(args.upper_radius)
-    else:
-        lr = 0.
-        if r_unit == 'Mpc':
-            ur = 5.
-        elif r_unit == 'Rvir':
-            ur = 2.5 
-        else:
-            raise ValueError('This should not have happened, how did you get another radial unit?')
-        
     rbins = modified_logspace(lr, ur, args.r_bins) 
 
     mass_head = mass_filename.replace('.hdf5','')
@@ -98,19 +97,25 @@ def create_rad_catalogue(mass_filename):
             if too_little and verbose:
                     tqdm.write(f'{mass_head}/{rad_filename} contains too little datapoints, skipping...')
 
+def create_full_catalogue():
+    onehalo.create_full_dataset((args.lower_mass, args.upper_mass), '/disks/cosmodm/vdvuurst/data/Onehalo_M_12-15.5.hdf5', ur, verbose = verbose)
 
 if __name__ == '__main__':
-    iterable = tqdm(reversed(mass_bins)) if verbose and choice in ['mass','both'] else reversed(mass_bins)
-    for mass_bin in iterable: # High mass bins first, since these have the least entries
-        mass_filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
-        mass_filepath =  os.path.join(data_dir, mass_filename)
-        match choice:
-            case 'mass':
-                create_mass_catalogue(mass_bin, mass_filename, mass_filepath)
+    if choice in ['mass', 'both']:
+        iterable = tqdm(reversed(mass_bins)) if verbose and choice in ['mass','both'] else reversed(mass_bins)
+        for mass_bin in iterable: # High mass bins first, since these have the least entries
+            mass_filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
+            mass_filepath =  os.path.join(data_dir, mass_filename)
+            match choice:
+                case 'mass':
+                    create_mass_catalogue(mass_bin, mass_filename, mass_filepath)
 
-            case 'rad':
-                create_rad_catalogue(mass_filename)
-            
-            case 'both':
-                create_mass_catalogue(mass_bin, mass_filename, mass_filepath)
-                create_rad_catalogue(mass_filename)
+                case 'rad':
+                    create_rad_catalogue(mass_filename)
+                
+                case 'both':
+                    create_mass_catalogue(mass_bin, mass_filename, mass_filepath)
+                    create_rad_catalogue(mass_filename)
+                
+    elif choice == 'full':
+        create_full_catalogue()

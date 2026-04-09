@@ -1,4 +1,4 @@
-from numpy import full_like, exp, power, square
+from numpy import full_like, exp, power, square, arange, array
 from itertools import product, combinations_with_replacement
 from inspect import signature
 
@@ -38,7 +38,14 @@ sigma_2_r_funcs = [linear_func, parabola_func]
 
 m_funcs = [linear_func, parabola_func, exponential_func]
 
+
 no_params = lambda f: len(signature(f).parameters) - 1
+get_func_name = lambda f: f.__name__.split('_func')[0]
+
+m_func_names = [get_func_name(m) for m in m_funcs]
+# lambda_r_func_names = [get_func_name(r) for r in lambda_r_funcs]
+# sigma_1_func_names = [get_func_name(r) for r in sigma_1_r_funcs]
+# sigma_2_func_names = [get_func_name(r) for r in sigma_2_r_funcs]
 
 def flatten(xss):
     return [x for xs in xss for x in xs]
@@ -47,10 +54,20 @@ def create_function_combinations(funclist):
     func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
     return flatten(func_combis)
 
+def create_function_combination_namelist(funclist):
+    name_combis = [list(product([get_func_name(rfunc)], list(combinations_with_replacement(m_func_names, no_params(rfunc))))) for rfunc in funclist]
+    return flatten(name_combis)
+
 lambda_funcs = create_function_combinations(lambda_r_funcs)
 sigma_1_funcs = create_function_combinations(sigma_1_r_funcs)
 sigma_2_funcs = create_function_combinations(sigma_2_r_funcs)
 
-all_combis = list(product(lambda_funcs, sigma_1_funcs, sigma_2_funcs))
+lambda_funcs_names = create_function_combination_namelist(lambda_r_funcs)
+sigma_1_funcs_names = create_function_combination_namelist(sigma_1_r_funcs)
+sigma_2_funcs_names = create_function_combination_namelist(sigma_2_r_funcs)
+
+all_combis = array(list(product(sigma_1_funcs, sigma_2_funcs, lambda_funcs)), dtype = object)
+all_names = array(list(product(sigma_1_funcs_names, sigma_2_funcs_names, lambda_funcs_names)), dtype = object)
+combi_numbers = arange(len(all_names)) + 1
 # print(f'There are {len(all_combis)} function combinations')
 

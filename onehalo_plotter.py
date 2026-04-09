@@ -98,13 +98,13 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
               f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
 
     # Calculating G-statistic for goodness of fit estimate
-    integral_func = mod_gaussian_integral if not loglambda else mod_gaussian_integral_loglambda
+    # integral_func = mod_gaussian_integral if not loglambda else mod_gaussian_integral_loglambda
     # Qval = get_Qvalue(param_dict, bin_heights, bin_edges, integral_func = integral_func, sanitycheck = False)
-    Gval = get_Gstat(param_dict, bin_heights, bin_edges, integral_func = integral_func)
+    # Gval = get_Gstat(param_dict, bin_heights, bin_edges, integral_func = integral_func)
 
     #Update textbox w/ G statistic and plot
     # paramstr += f'Q = {Qval:.3}'
-    paramstr += f'G = {Gval:.1f}'
+    # paramstr += f'G = {Gval:.1f}'
     if not single_gauss:
         frame.text(0.155, 0.71, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
     else:
