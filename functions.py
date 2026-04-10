@@ -6,7 +6,7 @@ from typing import Callable
 import os
 
 # sigma_1, sigma_2, lambda
-GLOBAL_PRIOR_RANGE = [[5., 1500.], [5., 1500.], [0., 0.5]]
+GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]]
 
 ## FUNCTIONS FOR ONEHALO LIKELIHOODS
 
@@ -146,6 +146,7 @@ def log_prior_vec(theta):
     return prior
 
 def mod_gaussian_vec(min_half_v_sq, sigma1_sq, sigma2_sq, lambda_, one_min_lambda): 
+
     #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
     # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
     p = 0
@@ -176,7 +177,7 @@ def log_mod_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, o
 def mod_gaussian_log_likelihood_vec(params, data, single_gauss = False): #full with prior
     lp = log_prior_vec(params) # vectorized prior
     prior_mask = np.isfinite(lp)
-
+ 
     # if single_gauss: params[-1] = 0 #TODO: fix? vectorize somehow? easy enough to do with slicing like 2::3
 
     #TODO: globalize for reduced operations? 

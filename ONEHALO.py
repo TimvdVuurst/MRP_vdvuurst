@@ -11,6 +11,27 @@ import emcee
 from corner import corner
 from functional_forms import * # also runs some code to create the functional_form catalogue in the all_combis variable
 from time import time
+from MCMC import MCMC
+# from ONEHALO_initial_conditions import _init_conditions
+
+# dictionary that, given a function in r, knows what to set the parameters to for a decent starting position
+r_function_dict = {'poly_4':[0,0,0,0,150], 'poly_3':[0,0,0,150], 
+                    'parabola':[0,0,50], 'linear':[0,50], 'exponential':[0,0,0.1], 'inverse':[0,0.4]}
+# Amount of parameters each function type takes
+m_func_n_params_dict = {'linear': 2, 'parabola': 3, 'exponential': 3}
+def _init_conditions(combi_names):
+    initial_conditions = []
+    for rfunc, mfuncs in combi_names:
+        for rparam_value, mfunc in zip(r_function_dict[rfunc], mfuncs):
+            if rparam_value == 0:
+                mfunc_values = [0 for _ in range(m_func_n_params_dict[mfunc])]
+            else: 
+                mfunc_values = [0 for _ in range(m_func_n_params_dict[mfunc] - 1)]
+                mfunc_values.append(rparam_value) # last value (constant term) is equal with all other parameters set to 0
+
+            initial_conditions.extend(mfunc_values)
+    
+    return initial_conditions
 
 #TODO: expand accordingly
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
@@ -653,7 +674,7 @@ class ONEHALO_joint_fitter:
 
         r_pointers = np.concat(([0],np.cumsum(n_params_r))) # indexers for the r parameters
         
-        #TODO: do I want to move this outside? to save time on initializing this every time
+        #TODO: do I want to move this outside? to save time on initializing this every time. i.e. make it a self
         double_gauss_params = np.zeros((3, halo_masses.size), dtype = np.float32)
 
         for i in range(3): # iterate over double gauss parameters
@@ -675,45 +696,57 @@ class ONEHALO_joint_fitter:
         
         # Update DG parameters from parameter set
         DG_params = self.get_double_gauss_parameters(split_params, function_combi, n_params_r)
-        
-        # Calculate the likelihood of the data + parameter set
-        L = mod_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
 
-        return L
+        # Calculate the likelihood of the data + parameter set
+        logL = mod_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
+
+        return -1*logL # make it -log(L) so we can minimize
 
     #WRAPPER
     def fit_function_combi_to_data(self, function_combi: list, function_combi_names: list, combi_number: int,
                                     nwalkers: int = 50, nsteps: int = 500,
                                     filepath: str = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/joint_subsample',
                                     **kwargs) -> None:
+        
         n_params_r, n_params_m, ndim = self.param_info(function_combi)
 
         #read in initial conditions and mcmc step sizes form pre-ran conditions (see ONEHALO_initial_conditions.py)
         #and add small amount of noise for every walker
         initial_params, MCMC_scales = np.load(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.npy'))
-        noise = np.random.normal(0, MCMC_scales, size = (nwalkers, MCMC_scales.size))
-        initial_params = initial_params[np.newaxis, :] + noise
+        
+        simple = np.array(_init_conditions(function_combi_names)) #TODO REMOVE
 
-        sampler = emcee.EnsembleSampler(nwalkers, ndim, self.get_joint_likelihood,
-                                         args = (n_params_m, n_params_r, function_combi))
-        sampler.run_mcmc(initial_params, nsteps, progress = kwargs['verbose'])
+        # Use broadcasting to match introduce the walker dimension without looping
+        MCMC_scales =  MCMC_scales[:, np.newaxis]
+        noise = np.random.normal(0, MCMC_scales / 10000, size = (MCMC_scales.size, nwalkers))
+        #TODO change back to commented line below
+        initial_params = simple[:, np.newaxis] + noise
+        # initial_params = initial_params[:, np.newaxis] + noise
+
+        # Initialize the MH-based MCMC sampler, usage based on emcee
+        sampler = MCMC(nwalkers = nwalkers,
+                       likelihood_func = self.get_joint_likelihood, 
+                       args = (n_params_m, n_params_r, function_combi),
+                       step_sizes = MCMC_scales)
+
+        sampler.run_mcmc(initial_params, nsteps = nsteps, verbose = kwargs['verbose'])
         
         samples = sampler.get_chain()
-        likelihoods = sampler.get_log_prob()
+        likelihoods = sampler.get_likelihoods()
+
         best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape)
         best_likelihood = likelihoods[best_arg]
-        best_params = np.array([samples[*best_arg, i] for i in range(ndim)])
+        best_params = np.array([samples[i, *best_arg] for i in range(ndim)])
        
-        #TODO: update perturb param function to work for joint model
+        #TODO: update perturb param function to work for joint model!!
 
         BIC_score = BIC(best_likelihood, self.Ndata, ndim)
 
         # Create dict of all relevant information of the fit
-
-        param_dict = {'parameters':list(best_params), 'likelihood':best_likelihood,
-                       'BIC':BIC_score, 'functional_form':function_combi_names,
+        param_dict = {'parameters':list(best_params), 'likelihood':float(best_likelihood),
+                       'BIC': float(BIC_score), 'functional_form':[list(f) for f in function_combi_names], # need to cast to list for json serialization
                        'nwalkers': nwalkers, 'nsteps': nsteps}
-    
+        
         # Save best parameter dictionary
         with open(os.path.join(filepath, f'function_combi_{combi_number}'), 'w') as f:
             dump(param_dict, f, indent = 1)
@@ -723,6 +756,7 @@ class ONEHALO_joint_fitter:
             self.plot_in_bin(best_params, function_combi, combi_number, n_params_r, n_params_m,
                             BIC_score, kwargs['mbin'], kwargs['rbin'], show = kwargs['show_plot'],
                             filepath = fpath_for_plot)
+
 
 
     def plot_in_bin(self, best_params: np.ndarray, function_combi: list, combi_number: int,
@@ -781,8 +815,8 @@ class ONEHALO_joint_fitter:
         DAT = np.linspace(np.min(vel_data_in_bin),np.max(vel_data_in_bin), min_half_v_sq_in_bin.size).reshape(min_half_v_sq_in_bin.shape)
 
         plot_data =  hist_area * mod_gaussian_vec_for_plot(-0.5*np.square(DAT), sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm)
-        print(plot_data)
-        ax.plot(vel_data_in_bin, plot_data, '-', label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
+
+        ax.plot(DAT.flatten(), plot_data, '-', label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
                 color='red')
         
         # ax.scatter(DAT, hist_area* mod_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm),
