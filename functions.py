@@ -177,7 +177,9 @@ def log_mod_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, o
 def mod_gaussian_log_likelihood_vec(params, data, single_gauss = False): #full with prior
     lp = log_prior_vec(params) # vectorized prior
     prior_mask = np.isfinite(lp)
- 
+    # if np.any(~prior_mask):
+    #     return np.inf # Return positive infinity so any minimization will reject this
+    
     # if single_gauss: params[-1] = 0 #TODO: fix? vectorize somehow? easy enough to do with slicing like 2::3
 
     #TODO: globalize for reduced operations? 
@@ -194,7 +196,7 @@ def mod_gaussian_log_likelihood_vec(params, data, single_gauss = False): #full w
     mu = log_mod_gaussian_vec(prior_data, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
     L = mu + np.sum(np.log(norm))
     
-    return L
+    return -L
 
 
 

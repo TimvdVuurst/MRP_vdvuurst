@@ -1,9 +1,9 @@
-from numpy import full_like, exp, power, square, arange, array
+import numpy as np
 from itertools import product, combinations_with_replacement
 from inspect import signature
 
 def constant_func(x,a):
-    return full_like(x, a)
+    return np.full_like(x, a)
 
 def linear_func(x, m, c):
     return m * x + c
@@ -12,25 +12,25 @@ def parabola_func(x, a, b, c):
     return a * x**2 + b * x + c
 
 def exponential_func(x, A, B, C):
-    return A * exp(-B * x) + C
+    return A * np.exp(-B * x) + C
 
 def exponential_squared_func(x, A, B, C):
-    return A * exp(-B * x**2) + C
+    return A * np.exp(-B * x**2) + C
 
 def power_law_func(x, p, n, q):
-    return p * power(x, n) + q
+    return p * np.power(x, n) + q
 
 def power_linear_func(x, p, n, q, b):
-    return p * power(x, n) + q * x + b
+    return p * np.power(x, n) + q * x + b
 
 def inverse_func(x, a, b):
     return a/x + b
 
 def poly_3_func(x, a, b, c, d):
-    return a * power(x,3) + b*square(x) + c*x + d
+    return a * np.power(x,3) + b*np.square(x) + c*x + d
 
 def poly_4_func(x, a, b, c, d, e):
-    return a*power(x,4) + b*power(x, 3) + c* square(x) + d*x + e
+    return a*np.power(x,4) + b*np.power(x, 3) + c* np.square(x) + d*x + e
 
 lambda_r_funcs = [exponential_func,inverse_func]
 sigma_1_r_funcs = [poly_3_func, poly_4_func]
@@ -66,8 +66,18 @@ lambda_funcs_names = create_function_combination_namelist(lambda_r_funcs)
 sigma_1_funcs_names = create_function_combination_namelist(sigma_1_r_funcs)
 sigma_2_funcs_names = create_function_combination_namelist(sigma_2_r_funcs)
 
-all_combis = array(list(product(sigma_1_funcs, sigma_2_funcs, lambda_funcs)), dtype = object)
-all_names = array(list(product(sigma_1_funcs_names, sigma_2_funcs_names, lambda_funcs_names)), dtype = object)
-combi_numbers = arange(len(all_names)) + 1
+all_combis = np.array(list(product(sigma_1_funcs, sigma_2_funcs, lambda_funcs)), dtype = object)
+all_names = np.array(list(product(sigma_1_funcs_names, sigma_2_funcs_names, lambda_funcs_names)), dtype = object)
+combi_numbers = np.arange(len(all_names)) + 1
+
+# Subsampling
+np.random.seed(42)
+combi_subsample_idx = np.random.choice(len(all_combis),size = len(all_combis)//100) #1% subsample 
+all_combis = np.array(all_combis, dtype=object)
+combi_subsample = all_combis[combi_subsample_idx]
+combi_subsample_names = np.array(all_names, dtype = object)[combi_subsample_idx]
+combi_subsamples_numbers = combi_numbers[combi_subsample_idx]
+
+# print(f'There are {combi_subsample.shape[0]} function combinations')
 # print(f'There are {len(all_combis)} function combinations')
 

@@ -19,13 +19,6 @@ from itertools import product
 
 from warnings import filterwarnings
 
-# def fxn():
-#     # warnings.warn("RuntimeWarning: invalid value encountered in scalar subtract lnpdiff = f + nlp - state.log_prob[j]", RuntimeWarning)
-#     warnings.warn(RuntimeWarning)
-
-# with warnings.catch_warnings(action="ignore"):
-#     fxn()
-
 # this might be a liiiitle dangerous but cleans up the output by a lot. that's because we often see invalid values in log10, but that's ok
 filterwarnings('ignore',category = RuntimeWarning)
 

@@ -36,12 +36,20 @@ def _init_conditions(combi_names):
 #TODO: expand accordingly
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
 
-def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
-    if m_min in [0,-1,np.nan, None]:
-        return (mass <= 10**m_max)
-    elif m_max in [0,-1,np.nan, None]:
-        return (10**m_min <= mass)
-    return (10**m_min <= mass) & (mass <= 10**m_max) 
+def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32, logmass: bool = False) -> np.ndarray:
+    if not logmass:
+        if m_min in [0,-1,np.nan, None]:
+            return (mass <= 10**m_max)
+        elif m_max in [0,-1,np.nan, None]:
+            return (10**m_min <= mass)
+        return (10**m_min <= mass) & (mass <= 10**m_max) 
+   
+    else:
+        if m_min in [0,-1,np.nan, None]:
+            return (mass <= m_max)
+        elif m_max in [0,-1,np.nan, None]:
+            return (m_min <= mass)
+        return (m_min <= mass) & (mass <= m_max) 
 
 def _make_radial_mask(radii: np.ndarray, r_min: np.float32, r_max: np.float32) -> np.ndarray:
     return (r_min <= radii) & (r_max >= radii)
@@ -124,7 +132,7 @@ class ONEHALO:
         relative_COMs = relative_COMs[radial_mask]
         rel_dist = rel_dist[radial_mask]
         relative_vels = relative_vels[radial_mask, :]
-        HostMasses = HostMasses[radial_mask]
+        HostMasses = np.log10(HostMasses[radial_mask]) # Save in dex!
 
         # Some datapoints have such velocities as to incur overflow errors (exponential of -0.5v is returned as 0), so we prune those
         # HOWEVER we prune it in such a way that the entire velocity vector is thrown, otherwise we get a lot of issues later on
@@ -627,6 +635,19 @@ class ONEHALO_fitter:
             self._fit_to_non_catalogued_radial_bins(**kwargs)
 
 
+def param_info(function_combi):
+    # Generate parameter information lists (pointers) given a function combination
+    n_params_r = []
+    n_params_m = [] # every list is for a double gauss parameter, containing a number of parameters needed to parametrize an r-parameter in terms of M for every r-parameter
+    for param_combi in function_combi:
+        _, m_parametrizations = param_combi # unpack the function combination for this specific parameter
+        n_params_r.append(len(m_parametrizations))
+        n_params_m.append([len(signature(m_func).parameters) - 1 for m_func in m_parametrizations])
+
+    n_params_m = flatten(n_params_m)
+
+    return n_params_r, n_params_m, sum(n_params_m)
+
 class ONEHALO_joint_fitter:
     def __init__(self, 
                  PATH: str = '/disks/cosmodm/vdvuurst/data/Onehalo_M_12-15.5_subsampled.hdf5',
@@ -644,20 +665,6 @@ class ONEHALO_joint_fitter:
         self.min_half_v_sq_arr = -0.5 *np.square(self.rel_vels) 
 
         self.Ndata = self.rel_vels.shape[0] # Take the 0 of the shape since shape[1] = 3 (3 indep. velocity points per datum)
-
-    @staticmethod
-    def param_info(function_combi):
-        # Generate parameter information lists (pointers) given a function combination
-        n_params_r = []
-        n_params_m = [] # every list is for a double gauss parameter, containing a number of parameters needed to parametrize an r-parameter in terms of M for every r-parameter
-        for param_combi in function_combi:
-            _, m_parametrizations = param_combi # unpack the function combination for this specific parameter
-            n_params_r.append(len(m_parametrizations))
-            n_params_m.append([len(signature(m_func).parameters) - 1 for m_func in m_parametrizations])
-
-        n_params_m = flatten(n_params_m)
-
-        return n_params_r, n_params_m, sum(n_params_m)
 
     @staticmethod
     def split_parameters(params, n_params_m):
@@ -698,30 +705,34 @@ class ONEHALO_joint_fitter:
         DG_params = self.get_double_gauss_parameters(split_params, function_combi, n_params_r)
 
         # Calculate the likelihood of the data + parameter set
-        logL = mod_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
+        # Note that the function call returns the negative log likelihood, not just the likelihood
+        minlogL = mod_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
 
-        return -1*logL # make it -log(L) so we can minimize
+        return minlogL 
 
     #WRAPPER
     def fit_function_combi_to_data(self, function_combi: list, function_combi_names: list, combi_number: int,
                                     nwalkers: int = 50, nsteps: int = 500,
+                                    n_params_r: list | None = None, n_params_m: list | None = None, ndim: int | None = None,
                                     filepath: str = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/joint_subsample',
                                     **kwargs) -> None:
         
-        n_params_r, n_params_m, ndim = self.param_info(function_combi)
+        if any([n_params_m is None, n_params_r is None, ndim is None]):
+           n_params_r, n_params_m, ndim = param_info(function_combi)
 
         #read in initial conditions and mcmc step sizes form pre-ran conditions (see ONEHALO_initial_conditions.py)
         #and add small amount of noise for every walker
+        # As of 14/04 these just equal the simple initials
         initial_params, MCMC_scales = np.load(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.npy'))
         
-        simple = np.array(_init_conditions(function_combi_names)) #TODO REMOVE
+        # simple = np.array(_init_conditions(function_combi_names)) #TODO REMOVE
 
         # Use broadcasting to match introduce the walker dimension without looping
         MCMC_scales =  MCMC_scales[:, np.newaxis]
-        noise = np.random.normal(0, MCMC_scales / 10000, size = (MCMC_scales.size, nwalkers))
-        #TODO change back to commented line below
-        initial_params = simple[:, np.newaxis] + noise
-        # initial_params = initial_params[:, np.newaxis] + noise
+        # experiment, does this work well?
+        MCMC_scales = np.full_like(MCMC_scales, 5.)
+        noise = np.random.normal(0, MCMC_scales / 10, size = (MCMC_scales.size, nwalkers))
+        initial_params = initial_params[:, np.newaxis] + noise
 
         # Initialize the MH-based MCMC sampler, usage based on emcee
         sampler = MCMC(nwalkers = nwalkers,
@@ -730,6 +741,8 @@ class ONEHALO_joint_fitter:
                        step_sizes = MCMC_scales)
 
         sampler.run_mcmc(initial_params, nsteps = nsteps, verbose = kwargs['verbose'])
+
+        print(f'NUMBER OF ACCEPTED STEPS IN THE MCMC PROCESS: {sampler.accepted_steps}')
         
         samples = sampler.get_chain()
         likelihoods = sampler.get_likelihoods()
@@ -758,14 +771,13 @@ class ONEHALO_joint_fitter:
                             filepath = fpath_for_plot)
 
 
-
     def plot_in_bin(self, best_params: np.ndarray, function_combi: list, combi_number: int,
                     n_params_r: int, n_params_m: list,
                     BIC_score: np.float32, mbin: list | tuple, rbin: list | tuple, show: bool = False,
                     filepath: str = '/disks/cosmodm/vdvuurst/figures/onehalo_joint/subsampled') -> None:
         
         # Define the bin
-        mbin_mask = _make_mass_mask(self.halo_masses, *mbin)
+        mbin_mask = _make_mass_mask(self.halo_masses, *mbin, logmass = True)
         rbin_mask = _make_radial_mask(self.rel_dist, *rbin)
         bin_mask = np.logical_and(mbin_mask, rbin_mask)
 

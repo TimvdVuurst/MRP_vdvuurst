@@ -8,8 +8,9 @@ class MCMC:
         self.nwalkers = nwalkers
         self.likelihood_func = lambda x: likelihood_func(x, *args)
         self.step_sizes = step_sizes
+        self.accepted_steps = 0
     
-    def _calculate_likelihood(self, pos):
+    def _calculate_likelihood(self, pos: np.ndarray):
         # For every walker
         return np.apply_along_axis(self.likelihood_func, 0, pos)
 
@@ -23,14 +24,16 @@ class MCMC:
         inverted_accept_mask = np.invert(accept_mask)
     
         # For those less likely points, still accept them with a random chance
+        # we have the negative log-likelihood, so we need to take the ratio of the exponents and add minus signs
         accept_mask[inverted_accept_mask] = (np.random.uniform(0, 1, size = (inverted_accept_mask.sum(),)) \
-                                             >= (proposed_likelihoods[inverted_accept_mask] / self.likelihood[inverted_accept_mask]))
-
+                                             <= np.exp((-proposed_likelihoods[inverted_accept_mask] + self.likelihood[inverted_accept_mask])))
+         
         self.position[:, accept_mask] = proposed_positions[:, accept_mask]
         self.likelihood[accept_mask] = proposed_likelihoods[accept_mask]
+        self.accepted_steps += accept_mask.sum()
         
 
-    def run_mcmc(self, initial_position: np.ndarray, nsteps: int, verbose = True):
+    def run_mcmc(self, initial_position: np.ndarray, nsteps: int, verbose: bool = True):
         self.nsteps = nsteps
 
         if self.step_sizes is None:
@@ -60,7 +63,6 @@ class MCMC:
 
                 self._step()
                 steps_taken += 1
-                pbar.update(1)
 
 
     def get_likelihoods(self):
@@ -80,10 +82,10 @@ if __name__ == '__main__':
         return (1-x)**2 + 100*(y -x)**2
 
     nwalkers, steps = 3, 1000
-    rosenbrock_init = np.random.normal(loc = (1,1), scale = (1,1), size = (nwalkers, 2))
+    rosenbrock_init = np.random.normal(loc = 1, scale = 1, size = (2, nwalkers))
 
     mcmc = MCMC(nwalkers = nwalkers, likelihood_func = rosenbrock_2D)
-    mcmc.run_mcmc(rosenbrock_init)
+    mcmc.run_mcmc(rosenbrock_init, nsteps=steps)
 
     samples = mcmc.get_chain()
     likelihoods = mcmc.get_likelihoods()
@@ -111,12 +113,12 @@ if __name__ == '__main__':
         
         return val
 
-    nwalkers, steps = 12, 1000
+    nwalkers, steps = 15, 1000
     nparams = 6
-    rosenbrock_init = np.random.normal(loc = 1, scale = 1, size = (nwalkers, nparams))
+    rosenbrock_init = np.random.normal(loc = 1, scale = 1, size = (nparams, nwalkers))
 
-    mcmc = MCMC(nwalkers = nwalkers, nsteps = steps, likelihood_func = rosenbrock_ND)
-    mcmc.run_mcmc(rosenbrock_init)
+    mcmc = MCMC(nwalkers = nwalkers, likelihood_func = rosenbrock_ND)
+    mcmc.run_mcmc(rosenbrock_init, nsteps = steps)
 
     samples = mcmc.get_chain()
     likelihoods = mcmc.get_likelihoods()

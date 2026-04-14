@@ -51,7 +51,7 @@ def create_and_store_initial_conditions(inpt):
     scale_difference = np.abs(simple_initials - found_starting_point)
 
     # From the scale difference in the parameters, set the steps MCMC will take for this function combination
-    min_step = 1e-4
+    min_step = 1e-2
     sigmas_MCMC = scale_difference * 0.1 # TODO: set a minimum? e.g. 1e-3 or 1e-4 note, to set a minimum use np.maximum ;)
     sigmas_MCMC[sigmas_MCMC == 0] = min_step 
 
