@@ -7,28 +7,29 @@ import os
 
 # sigma_1, sigma_2, lambda
 GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]]
+SQRT2PI_FAC = 1 / np.sqrt(2 * np.pi)
 
 ## FUNCTIONS FOR ONEHALO LIKELIHOODS
 
-def mod_gaussian(v, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
+def double_gaussian(v, sigma1, sigma2, lambda_): #for regular (i.e. untransformed velocity) input
     # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
 
-    norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)* np.sqrt(2 * np.pi))
+    norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)) * SQRT2PI_FAC
     vsq = -1 * np.square(v) * 0.5
     return norm * ((1-lambda_) * np.exp(vsq / sigma1**2) + lambda_ * np.exp(vsq / sigma2**2))
 
-def mod_gaussian_loglambda(v, sigma1, sigma2, lambda_): #for lambda in log scale
+def double_gaussian_loglambda(v, sigma1, sigma2, lambda_): #for lambda in log scale
     lambda_10 = 10**lambda_
-    norm = 1 / (((1- lambda_10) * sigma1 + lambda_10 * sigma2)* np.sqrt(2 * np.pi))
+    norm = 1 / (((1- lambda_10) * sigma1 + lambda_10 * sigma2)) * SQRT2PI_FAC
     vsq = -1 * np.square(v) * 0.5
     return norm * ((1-lambda_10) * np.exp(vsq / sigma1**2) + lambda_10 * np.exp(vsq / sigma2**2))
 
-def mod_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
-    integral, _ = Romberg(x_i, x_f, lambda x: mod_gaussian(x,sigma1,sigma2,lambda_)) 
+def double_gaussian_integral(sigma1,sigma2,lambda_,x_i,x_f):
+    integral, _ = Romberg(x_i, x_f, lambda x: double_gaussian(x,sigma1,sigma2,lambda_)) 
     return integral
 
-def mod_gaussian_integral_loglambda(sigma1,sigma2,lambda_,x_i,x_f):
-    integral, _ = Romberg(x_i, x_f, lambda x: mod_gaussian_loglambda(x,sigma1,sigma2,lambda_)) 
+def double_gaussian_integral_loglambda(sigma1,sigma2,lambda_,x_i,x_f):
+    integral, _ = Romberg(x_i, x_f, lambda x: double_gaussian_loglambda(x,sigma1,sigma2,lambda_)) 
     return integral
 
 def log_prior(theta):
@@ -51,13 +52,7 @@ def log_prior(theta):
     
     return -np.inf
 
-def log_prior_loglambda(theta):
-    sigma_1, sigma_2, lambda_ = theta
-    if sigma_2 < sigma_1 <= 1500. and 1. <= sigma_2 < sigma_1 and -np.inf < lambda_ <= 0.:
-        return 0.0
-    return -np.inf
-
-def mod_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full with prior
+def double_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full with prior
     lp = log_prior(params)
     if not np.isfinite(lp):
         return -np.inf
@@ -68,7 +63,7 @@ def mod_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full wi
     
     log_L = 0
     for i in range(1,len(bin_edges)):
-        f_b = A * mod_gaussian_integral(sigma1,sigma2,lambda_,bin_edges[i-1],bin_edges[i])
+        f_b = A * double_gaussian_integral(sigma1,sigma2,lambda_,bin_edges[i-1],bin_edges[i])
         
         #penalize negative values and zero
         if f_b <= 0:
@@ -79,29 +74,27 @@ def mod_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full wi
     
     return log_L
 
-def mod_gaussian_log_likelihood(params, data, loglambda, single_gauss): #full with prior
-    prior = log_prior_loglambda if loglambda else log_prior
-    lp = prior(params)
+def double_gaussian_log_likelihood(params, data, loglambda, single_gauss): #full with prior
+    lp = log_prior(params)
     if not np.isfinite(lp):
         return -np.inf
 
     if single_gauss: params[-1] = 0
 
-    mu_func = mod_gaussian_loglambda if loglambda else mod_gaussian
+    mu_func = double_gaussian_loglambda if loglambda else double_gaussian
     mu_i = mu_func(data, *params)
     return np.sum(np.log10(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
 
-def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
+def double_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
     sigma1, sigma2, lambda_ = params
     hist_area = np.sum(bin_heights) 
-    # I do not know where this comes from, integral of mod_gaussian dv from -inf to inf is 1.  
-    # fit_integral = (sigma1 * np.sqrt(2 * np.pi)) *(3*sigma2 + 1 + 105*lambda_) 
+
     fit_integral = 1.
     A = hist_area / fit_integral
     
     neg_log_L = 0
     for i in range(1,len(bin_edges)):
-        f_b = A * mod_gaussian_integral(sigma1,sigma2,lambda_,bin_edges[i-1],bin_edges[i])
+        f_b = A * double_gaussian_integral(sigma1,sigma2,lambda_,bin_edges[i-1],bin_edges[i])
         
         #penalize negative values and zero
         if f_b <= 0:
@@ -112,17 +105,25 @@ def mod_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
     
     return neg_log_L
 
-def mod_gaussian_neg_log_likelihood(params, data):
+def double_gaussian_neg_log_likelihood(params, data):
     # "binning" such that each bin contains either 1 or 0 points. Poisson likelihood reduces to this.
     #Data must be x_i values
     sigma1, sigma2, lambda_ = params
     fit_integral = 1. #verified
 
-    return -1 * np.sum(np.log(mod_gaussian(data, sigma1, sigma2, lambda_))) + fit_integral
+    return -1 * np.sum(np.log(double_gaussian(data, sigma1, sigma2, lambda_))) + fit_integral
 
 #### VECTORIZED LOG(L) functions
-def log_prior_vec(theta):
-    # VECTORIZED this works well and is quick
+def log_prior_vec(theta: list | tuple | np.ndarray):
+    """ Vectorized approach to prior check. Compares sigma_1, sigma_2 and lambda (= theta, in that order) against the values set in GLOBAL_PRIOR_RANGE and returns an array of 
+    similar size
+
+    Args:
+        theta (list | tuple | np.ndarray): Unpackable holding sigma_1, sigma_2 and lambda arrays in that order.
+
+    Returns:
+        np.ndarray: prior of shape theta.shape[1] holding 0 where the values are all good and np.inf where this is not the case.
+    """
     sigma_1, sigma_2, lambda_ = theta
     
     if None in GLOBAL_PRIOR_RANGE[0]: # sigma_1 must be larger than sigma_2
@@ -137,16 +138,27 @@ def log_prior_vec(theta):
     
     lambda_prior = (GLOBAL_PRIOR_RANGE[2][0] <= lambda_) * (lambda_ <= GLOBAL_PRIOR_RANGE[2][1])
 
-    cond = np.logical_and(np.logical_and(sigma_1_prior, sigma_2_prior),lambda_prior)
-    prior = np.where(cond, 0,-np.inf)
+    cond = sigma_1_prior * sigma_2_prior * lambda_prior
+    prior = np.where(cond, 0, np.inf)
 
     # so that it can also be used unvectorized if we want
     if theta.size == 3:
         return np.float32(prior)
     return prior
 
-def mod_gaussian_vec(min_half_v_sq, sigma1_sq, sigma2_sq, lambda_, one_min_lambda): 
+def double_gaussian_vec(min_half_v_sq: float | np.ndarray, sigma1_sq: float | np.ndarray, sigma2_sq: float | np.ndarray, lambda_: float | np.ndarray, one_min_lambda: float | np.ndarray):  
+    """ Given pre-calculated operations on the three double gaussian parameters and velocity, vectorized. I.e. this means that all input can be either scalars or np.ndarrays of the same size.
 
+    Args:
+        min_half_v_sq (float | np.ndarray): _description_
+        sigma1_sq (float | np.ndarray): _description_
+        sigma2_sq (float | np.ndarray): _description_
+        lambda_ (float | np.ndarray): _description_
+        one_min_lambda (float | np.ndarray): _description_
+
+    Returns:
+        float: The value of the modified gaussian summed over the parameter values. Only usuable for likelihood therefore.
+    """
     #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
     # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
     p = 0
@@ -155,7 +167,7 @@ def mod_gaussian_vec(min_half_v_sq, sigma1_sq, sigma2_sq, lambda_, one_min_lambd
                              lambda_ * np.exp(min_half_v_sq[:,i] / sigma2_sq)))) # take the log so we can sum
     return p 
 
-def mod_gaussian_vec_for_plot(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda, norm): 
+def double_gaussian_vec_for_plot(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda, norm): 
     #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
     # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
     p = np.zeros_like(min_half_v_sq)
@@ -164,40 +176,49 @@ def mod_gaussian_vec_for_plot(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambd
                              lambda_ * np.exp(min_half_v_sq[:,i] * sigma2_sq_inv)) 
     return p.flatten()
 
-def log_mod_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda):
-    #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
-    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
-    p = 0
+def log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda):
+    """ Given pre-calculated operations on the three double gaussian parameters and velocity, vectorized and in log-space. 
+        I.e. this means that all input can be either scalars or np.ndarrays of the same size.
+
+    Args:
+        min_half_v_sq (float | np.ndarray): Velocity data scaled accordingly, i.e. as -0.5 v^2.. Expected to have shape (3, N).
+        sigma1_sq (float | np.ndarray): sigma_1^2. Expected to have shape (N,)
+        sigma2_sq (float | np.ndarray): sigma_2^2. Expected to have shape (N,)
+        lambda_ (float | np.ndarray): Lambda parameters. Expected to have shape (N,)
+        one_min_lambda (float | np.ndarray): 1 - lambda. Expected to have shape (N,)
+
+    Returns:
+        float: The log-value of the modified gaussian summed over the parameter values. Only usuable for likelihood therefore.
+    """
+    
     min_half_v_sq_sigma_1 = min_half_v_sq * sigma1_sq_inv[:, np.newaxis]
     min_half_v_sq_sigma_2 = min_half_v_sq * sigma2_sq_inv[:, np.newaxis]
-    # Broadcast to match the shapes
-    p = np.sum(min_half_v_sq + np.log(one_min_lambda[:, np.newaxis] + lambda_[:, np.newaxis] * np.exp(min_half_v_sq_sigma_2 - min_half_v_sq_sigma_1)))
+
+    p = np.sum(min_half_v_sq_sigma_1 + np.log(one_min_lambda[:, np.newaxis] + lambda_[:, np.newaxis] * np.exp(min_half_v_sq_sigma_2 - min_half_v_sq_sigma_1)))
     return p
 
-def mod_gaussian_log_likelihood_vec(params, data, single_gauss = False): #full with prior
-    lp = log_prior_vec(params) # vectorized prior
-    prior_mask = np.isfinite(lp)
-    # if np.any(~prior_mask):
-    #     return np.inf # Return positive infinity so any minimization will reject this
-    
-    # if single_gauss: params[-1] = 0 #TODO: fix? vectorize somehow? easy enough to do with slicing like 2::3
+def double_gaussian_log_likelihood_vec(params: np.ndarray, min_half_v_sq: np.ndarray, single_gauss: bool = False) -> np.float64:
+    """ Calculates the negative log-likelihood of the double gaussian model. Uses the log_double_gaussian_vec for this.
 
-    #TODO: globalize for reduced operations? 
-    prior_data = data[prior_mask]
+    Args:
+        params (np.ndarray): Arrays holding values for sigma1, sigma2, lambda_ in that order.
+        min_half_v_sq (np.ndarray): Velocity data scaled accordingly, i.e. as -0.5 v^2. Expected to have shape (3, N).
+        single_gauss (bool, optional): Sets the lambda parameters to 0 always thus mimicking a single gaussian with similar likelihood scores. Defaults to False.
 
-    # TODO: these can be taken outside of this function as well probably when implementing in MCMC
-    # unnecessary to calculate these every time in the loop below (i.e. every time mod_gaussian_vec is called) since the parameter values stay the same
-    sigma1, sigma2, lambda_ = params[:, prior_mask]
-    norm = 1 / (((1- lambda_) * sigma1 + lambda_ * sigma2)* np.sqrt(2 * np.pi)) # independent of v, so move here
+    Returns:
+        np.float64: the negative log-likelihood of the double gaussian model. Uses the log_double_gaussian_vec for this.
+    """
+    sigma1, sigma2, lambda_ = params
+
+    one_min_lambda = 1 - lambda_
+    norm = 1 / (((one_min_lambda) * sigma1 + lambda_ * sigma2)) * SQRT2PI_FAC 
     sigma1_sq_inv = 1 / (2 * sigma1**2)
     sigma2_sq_inv = 1 / (2 * sigma2**2)
-    one_min_lambda = 1 - lambda_
 
-    mu = log_mod_gaussian_vec(prior_data, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
+    mu = log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
     L = mu + np.sum(np.log(norm))
     
     return -L
-
 
 
 # GOODNESS OF FIT STATISTICS (OUTDATED)
@@ -232,7 +253,7 @@ def _Qval(x,k):
     #gammainc in scipy is the *regularized* incomplete lower gamma function so /gamma(k/2) is implicit
     return 1 - gammainc(k/2,x/2)
 
-def get_Qvalue(param_dict, bin_heights, bin_edges, integral_func = mod_gaussian_integral, sanitycheck = False):
+def get_Qvalue(param_dict, bin_heights, bin_edges, integral_func = double_gaussian_integral, sanitycheck = False):
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     hist_area=np.sum(bin_heights)
 
@@ -246,7 +267,7 @@ def get_Qvalue(param_dict, bin_heights, bin_edges, integral_func = mod_gaussian_
     #dof = 4 since three parameters and 1 extra less since if N -1 bins are filled we know exactly the Nth bin count
     return _Qval(Gval, len(bin_heights) - 4)
 
-def get_Gstat(param_dict, bin_heights, bin_edges, integral_func = mod_gaussian_integral):
+def get_Gstat(param_dict, bin_heights, bin_edges, integral_func = double_gaussian_integral):
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     hist_area=np.sum(bin_heights)
 
@@ -313,7 +334,7 @@ def _perturb_params(params: np.array, log_likelihood_func: Callable[[np.array], 
     Args:
         params (list or array): list or array containing the parameter values *in order* [sigma1, sigma2, lambda]
         L_thresh (float): Threshold likelihood to reach.
-        log_likelihood_func (function, optional): Log likelihood of the model. Defaults to mod_gaussian_log_likelihood. NOTE that this is an L-maximizing function since it is negative numbers we want to be as near to 0 as possible!
+        log_likelihood_func (function, optional): Log likelihood of the model. Defaults to double_gaussian_log_likelihood. NOTE that this is an L-maximizing function since it is negative numbers we want to be as near to 0 as possible!
         single_gaussian (bool, optional): Controls whether we are fitting a single gaussian model (True) or a Double Gaussian (False). Defaults to False.
         threshold (float, optional): How much we want to be above the best found likelihood (relative). Defaults to 1.01 (1%). 
     
@@ -386,7 +407,7 @@ def perturb_around_likelihood(params: np.array, log_likelihood_func: Callable[[n
 
     Args:
         params (np.array): Best found parameter set
-        log_likelihood_func (function, optional): Log likelihood of the model. Defaults to mod_gaussian_log_likelihood.
+        log_likelihood_func (function, optional): Log likelihood of the model. Defaults to double_gaussian_log_likelihood.
         single_gauss (bool, optional): Controls whether we "turn off" the lambda parameter, i.e. fix it to 0.
         threshold (float, optional): How much we want to be above the best found likelihood (relative). Defaults to 1.01 (1%). 
 
@@ -462,8 +483,8 @@ def modified_logspace(start, stop, num, base = 10):
 
 def BIC(L, n, k = 3):
     #L is assumed already as a logarithm and as a MAXIMUM
-    #n : no data points
-    #k: no parameters
+    #n : no. data points
+    #k: no. parameters
     return (k * np.log(n)) - 2 * L
 
 def mkdir_if_non_existent(path):

@@ -365,8 +365,9 @@ class ONEHALO_fitter:
 
             #corner plot
             if not kwargs['single_gauss']:
+                # print(samples.shape)
                 flat_samples = sampler.get_chain(discard=burnin, thin=15, flat=True) # this is probably fine
-
+                # print(flat_samples.shape)
                 fig = corner(flat_samples, labels = param_labels, quiet = True,
                                 quantiles=[0.16, 0.5, 0.84])
 
@@ -398,14 +399,14 @@ class ONEHALO_fitter:
         if plot:
             if loglambda:
                 if not kwargs['single_gauss']: 
-                    plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
+                    plot_distribution_gaussian_mod(double_gaussian_loglambda, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
                 else: 
-                    plot_distribution_gaussian_mod(mod_gaussian_loglambda, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
+                    plot_distribution_gaussian_mod(double_gaussian_loglambda, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
             else:
                 if not kwargs['single_gauss']: 
-                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
+                    plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
                 else: 
-                    plot_distribution_gaussian_mod(mod_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
+                    plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
         
         if kwargs['timeit']: 
             duration = time() - now
@@ -443,7 +444,7 @@ class ONEHALO_fitter:
 
         filename += f'/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 
-        likelihood_func = mod_gaussian_log_likelihood
+        likelihood_func = double_gaussian_log_likelihood
 
         output = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
                                                         filename = filename, rbin = rbin, **kwargs)
@@ -495,7 +496,7 @@ class ONEHALO_fitter:
             else:
                 use_binned = False
 
-            likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
+            likelihood_func = double_gaussian_log_likelihood_binned if use_binned else double_gaussian_log_likelihood
             output = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
                                                             filename = filename, use_binned = use_binned, rbin = rbin, **kwargs)
             
@@ -555,8 +556,8 @@ class ONEHALO_fitter:
                         use_binned = False                
                     filename = f'/disks/cosmodm/vdvuurst/figures/emcee_results_radial_bins/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
                 
-                    likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
-                    result, err = self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, mod_gaussian_log_likelihood,
+                    likelihood_func = double_gaussian_log_likelihood_binned if use_binned else double_gaussian_log_likelihood
+                    result, err = self._fit_modified_gaussian_emcee(self.rel_vels, bins, self.initial_param_dict, double_gaussian_log_likelihood,
                                                         nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
                                                         verbose = verbose, save_params = save_params, plot = plot, filename = filename, **kwargs)
                     results[i] = result
@@ -578,7 +579,7 @@ class ONEHALO_fitter:
                 if os.path.isfile(f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/emcee/M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f}.json') and not overwrite:
                     print(f'M_{self.lower_mass}-{self.upper_mass}/r_{rbin[0]:.2f}-{rbin[1]:.2f} already done, skipping...')
             
-                likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
+                likelihood_func = double_gaussian_log_likelihood_binned if use_binned else double_gaussian_log_likelihood
                 result, err = self._fit_modified_gaussian_emcee(masked_data, bins, self.initial_param_dict, likelihood_func,
                                                     nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, loglambda = loglambda, **kwargs)
@@ -614,7 +615,7 @@ class ONEHALO_fitter:
             else:
                 use_binned = False
            
-            likelihood_func = mod_gaussian_log_likelihood_binned if use_binned else mod_gaussian_log_likelihood
+            likelihood_func = double_gaussian_log_likelihood_binned if use_binned else double_gaussian_log_likelihood
             result, err = self._fit_modified_gaussian_emcee(masked_data, bins, self.initial_param_dict, likelihood_func,
                                                     nwalkers = nwalkers, nsteps = nsteps, use_binned = use_binned,
                                                     verbose = verbose, save_params = save_params, plot = plot, filename = filename, loglambda = loglambda)
@@ -695,6 +696,11 @@ class ONEHALO_joint_fitter:
             param_values = param_r_func(rel_dist, *parameters_for_r_func) 
             double_gauss_params[i] = param_values
 
+        # Clamp to prior range here so we don't throw out bad points but account for them in the likelihood instead
+        double_gauss_params = np.clip(double_gauss_params,
+                            np.array([GLOBAL_PRIOR_RANGE[0][0], GLOBAL_PRIOR_RANGE[1][0], GLOBAL_PRIOR_RANGE[2][0]])[:, np.newaxis],
+                            np.array([GLOBAL_PRIOR_RANGE[0][1], GLOBAL_PRIOR_RANGE[1][1], GLOBAL_PRIOR_RANGE[2][1]])[:, np.newaxis])
+        
         return double_gauss_params
     
     def get_joint_likelihood(self, params, n_params_m, n_params_r, function_combi):
@@ -706,11 +712,10 @@ class ONEHALO_joint_fitter:
 
         # Calculate the likelihood of the data + parameter set
         # Note that the function call returns the negative log likelihood, not just the likelihood
-        minlogL = mod_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
+        minlogL = double_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
 
         return minlogL 
 
-    #WRAPPER
     def fit_function_combi_to_data(self, function_combi: list, function_combi_names: list, combi_number: int,
                                     nwalkers: int = 50, nsteps: int = 500,
                                     n_params_r: list | None = None, n_params_m: list | None = None, ndim: int | None = None,
@@ -722,15 +727,11 @@ class ONEHALO_joint_fitter:
 
         #read in initial conditions and mcmc step sizes form pre-ran conditions (see ONEHALO_initial_conditions.py)
         #and add small amount of noise for every walker
-        # As of 14/04 these just equal the simple initials
+
         initial_params, MCMC_scales = np.load(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.npy'))
         
-        # simple = np.array(_init_conditions(function_combi_names)) #TODO REMOVE
-
         # Use broadcasting to match introduce the walker dimension without looping
         MCMC_scales =  MCMC_scales[:, np.newaxis]
-        # experiment, does this work well?
-        MCMC_scales = np.full_like(MCMC_scales, 5.)
         noise = np.random.normal(0, MCMC_scales / 10, size = (MCMC_scales.size, nwalkers))
         initial_params = initial_params[:, np.newaxis] + noise
 
@@ -741,19 +742,32 @@ class ONEHALO_joint_fitter:
                        step_sizes = MCMC_scales)
 
         sampler.run_mcmc(initial_params, nsteps = nsteps, verbose = kwargs['verbose'])
-
-        print(f'NUMBER OF ACCEPTED STEPS IN THE MCMC PROCESS: {sampler.accepted_steps}')
+        
+        if kwargs['verbose']:
+            tqdm.write(f'NUMBER OF ACCEPTED STEPS IN THE MCMC PROCESS: {sampler.accepted_steps}')
         
         samples = sampler.get_chain()
         likelihoods = sampler.get_likelihoods()
+        
+        if kwargs['verbose']:
+            infmask = np.logical_or(likelihoods == -np.inf, likelihoods == np.inf)
+            tqdm.write(f'THERE ARE {infmask.sum()} / {likelihoods.size} likelihoods that are inf or -inf')
+        
 
-        best_arg = np.unravel_index(np.argmax(likelihoods), likelihoods.shape)
+        #TODO: this should not happen but it does sometimes and I don't know why, needs rerun for logging since I messed up
+        try:
+            best_arg = np.unravel_index(np.nanargmin(likelihoods), likelihoods.shape) # argmin since we are looking at minlogL
+        except ValueError:
+            with open('./logs/log.txt', 'w') as f:
+                print(f'FOR COMBI {combi_number} WE SEE A FULL NaN LIKELIHOOD.', file = f)
+            best_arg = np.unravel_index(likelihoods.size - 1, likelihoods.shape)
+
         best_likelihood = likelihoods[best_arg]
         best_params = np.array([samples[i, *best_arg] for i in range(ndim)])
        
         #TODO: update perturb param function to work for joint model!!
 
-        BIC_score = BIC(best_likelihood, self.Ndata, ndim)
+        BIC_score = BIC(-1*best_likelihood, self.Ndata, ndim) # -1 is because the BIC takes into account logL not minlogL
 
         # Create dict of all relevant information of the fit
         param_dict = {'parameters':list(best_params), 'likelihood':float(best_likelihood),
@@ -761,15 +775,34 @@ class ONEHALO_joint_fitter:
                        'nwalkers': nwalkers, 'nsteps': nsteps}
         
         # Save best parameter dictionary
-        with open(os.path.join(filepath, f'function_combi_{combi_number}'), 'w') as f:
+        with open(os.path.join(filepath, f'function_combi_{combi_number}.json'), 'w') as f:
             dump(param_dict, f, indent = 1)
 
         if kwargs['plot']:
             fpath_for_plot = '/disks/cosmodm/vdvuurst/figures/onehalo_joint/subsampled' if 'subsampled' in filepath else '/disks/cosmodm/vdvuurst/figures/onehalo_joint'
-            self.plot_in_bin(best_params, function_combi, combi_number, n_params_r, n_params_m,
+            try:
+                self.plot_in_bin(best_params, function_combi, combi_number, n_params_r, n_params_m,
                             BIC_score, kwargs['mbin'], kwargs['rbin'], show = kwargs['show_plot'],
                             filepath = fpath_for_plot)
+            except KeyError:
+                pass
+        
+            # corner plot
+            cornerpath = os.path.join(fpath_for_plot, 'corner_plots')
+            mkdir_if_non_existent(cornerpath)
+            
+            flat_samples = sampler.get_chain(discard=250, thin=5)# this is probably fine
+            flat_samples = flat_samples.reshape(np.array((flat_samples.shape)[::-1])) # flip it
+            flat_samples = flat_samples.reshape((flat_samples.shape[0]*flat_samples.shape[1], flat_samples.shape[2])) #and flatten walker and step dimensions
 
+            alpha = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            fig = corner(flat_samples, labels = list(alpha[:ndim]), quiet = True,
+                            quantiles=[0.16, 0.5, 0.84])
+            fig.tight_layout()
+            fig.savefig(os.path.join(cornerpath, f'function_combi_{combi_number}_corner.png'), dpi = 200)
+            plt.close(fig)
+
+            
 
     def plot_in_bin(self, best_params: np.ndarray, function_combi: list, combi_number: int,
                     n_params_r: int, n_params_m: list,
@@ -821,17 +854,17 @@ class ONEHALO_joint_fitter:
 
         norm = 1 / (((one_min_lambda * DG_params[0]) + (DG_params[2] * DG_params[1]))* np.sqrt(2 * np.pi)) 
 
-        # ax.plot(vel_data_in_bin, hist_area*mod_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda),
+        # ax.plot(vel_data_in_bin, hist_area*double_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda),
         #         '-', label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
         #         color='red')
         DAT = np.linspace(np.min(vel_data_in_bin),np.max(vel_data_in_bin), min_half_v_sq_in_bin.size).reshape(min_half_v_sq_in_bin.shape)
 
-        plot_data =  hist_area * mod_gaussian_vec_for_plot(-0.5*np.square(DAT), sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm)
+        plot_data =  hist_area * double_gaussian_vec_for_plot(-0.5*np.square(DAT), sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm)
 
         ax.plot(DAT.flatten(), plot_data, '-', label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
                 color='red')
         
-        # ax.scatter(DAT, hist_area* mod_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm),
+        # ax.scatter(DAT, hist_area* double_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm),
         #             label = f"Double Gaussian (joint)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
         #             color='red')
 

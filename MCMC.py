@@ -68,10 +68,18 @@ class MCMC:
     def get_likelihoods(self):
         return self.likelihood_chain
     
-    def get_chain(self):
-        return self.chains
+    def get_chain(self, discard: int | None = None, thin: int | None = None):
+        if thin is None and discard is None:
+            return self.chains
+        elif thin is None:
+            return self.chains[..., discard:]
+        elif discard is None:
+            return self.chains[..., ::thin]
+        else:
+            return self.chains[..., discard::thin]
     
 
+# TESTS
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 

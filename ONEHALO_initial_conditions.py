@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
-from ONEHALO import ONEHALO_joint_fitter
+from ONEHALO import ONEHALO_joint_fitter, param_info
 from multiprocessing import Pool
 from functions import mkdir_if_non_existent
 import os
@@ -10,13 +10,14 @@ joint_fitter = ONEHALO_joint_fitter() # initialize fitter class - this loads in 
 
 # dictionary that, given a function in r, knows what to set the parameters to for a decent starting position
 r_function_dict = {'poly_4':[0,0,0,0,150], 'poly_3':[0,0,0,150], 
-                    'parabola':[0,0,50], 'linear':[0,50], 'exponential':[0,0,0.1], 'inverse':[0,0.4]}
+                    'parabola':[0,0,50], 'linear':[0,50], 'exponential':[0,0,0.1], 'inverse':[0,0.4]} #NOTE: still needs rerun with 0.4 set to 0.1
 # Amount of parameters each function type takes
 m_func_n_params_dict = {'linear': 2, 'parabola': 3, 'exponential': 3}
 
 DATA_SAVE_PATH = '/disks/cosmodm/vdvuurst/data/onehalo_joint_initial_conditions'
 
 def _init_conditions(combi_names):
+    # find simplistic starting conditions
     initial_conditions = []
     for rfunc, mfuncs in combi_names:
         for rparam_value, mfunc in zip(r_function_dict[rfunc], mfuncs):
@@ -33,10 +34,10 @@ def _init_conditions(combi_names):
 def _find_starting_point(function_combi, combi_names):
     # Get very simple initial conditions (mostly zeroes) and necessary infotmation from function combination
     initial_conditions = _init_conditions(combi_names)    
-    n_params_r, n_params_m, ntot = joint_fitter.param_info(function_combi)
+    n_params_r, n_params_m, ntot = param_info(function_combi)
     
     # Call from the joint_fitter object since it has data loaded in which is deeded to get the DG param values
-    # NOTE: not a max number of steps given since the scipy source works with a while structure, but it runs quick enough (1hr)
+    # NOTE: not a max number of steps given since the scipy source works with a while structure, but it runs quick enough (~1hr on hydra)
     res = minimize(joint_fitter.get_joint_likelihood, initial_conditions, 
                    args = (n_params_m, n_params_r, function_combi),
                    method = 'BFGS') 

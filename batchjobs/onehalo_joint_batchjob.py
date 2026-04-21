@@ -10,6 +10,7 @@ from functional_forms import *
 from tqdm import tqdm
 from argparse import ArgumentParser
 import os
+from glob import glob
 
 from warnings import filterwarnings
 # this might be a liiiitle dangerous but cleans up the output by a lot. that's because we often see invalid values in log10, but that's ok
@@ -17,9 +18,11 @@ filterwarnings('ignore',category = RuntimeWarning)
 
 
 parser = ArgumentParser()
-parser.add_argument('-S', '--subsampled', type = int, default = 1, help = 'Whether to use subsampled data or not. Defautls to 1 (True)')
-parser.add_argument('-NC', '--ncores', type = int, default = 20, help = 'Whether to use subsampled data or not. Defautls to 1 (True)')
-parser.add_argument('-V', '--verbose', type = int, default = 0, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
+parser.add_argument('-S', '--subsampled', type = int, default = 1, help = 'Whether to use subsampled data or not. Defautls to 1 (True).')
+parser.add_argument('-NC', '--ncores', type = int, default = 20, help = 'Whether to use subsampled data or not. Defautls to 1 (True).')
+parser.add_argument('-V', '--verbose', type = int, default = 0, help = 'Whether to print diagnostics and timings. Defaults to 0 (False).')
+parser.add_argument('-P', '--plot', type = int, default = 0, help = 'Whether to plot stuff. Defaults to 0 (False).')
+parser.add_argument('-RM', '--remove_previous', type = int, default = 0, help = 'Whether to remove all previous run data. Defaults to 0 (False).')
 args = parser.parse_args()
 
 use_subsampled = bool(args.subsampled)
@@ -42,11 +45,16 @@ def _create_iterable_input():
 
 
 def run_experiment(inpt):
-    joint_fitter.fit_function_combi_to_data(*inpt, verbose = verbose, plot = False)
+    joint_fitter.fit_function_combi_to_data(*inpt, verbose = verbose, plot = bool(args.plot))
 
 if __name__ == '__main__':
     NPROCS = args.ncores
     iterable_input = _create_iterable_input()
+
+    if bool(args.remove_previous):
+        old_files = glob('/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/joint_subsample/*.json')
+        for f in old_files:
+            os.remove(f)
 
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
         for _ in p.imap_unordered(run_experiment, iterable_input):

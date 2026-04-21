@@ -78,6 +78,15 @@ combi_subsample = all_combis[combi_subsample_idx]
 combi_subsample_names = np.array(all_names, dtype = object)[combi_subsample_idx]
 combi_subsamples_numbers = combi_numbers[combi_subsample_idx]
 
-# print(f'There are {combi_subsample.shape[0]} function combinations')
-# print(f'There are {len(all_combis)} function combinations')
+if __name__ == '__main__':
+    num_to_func_dict = dict(zip([int(c) for c in combi_numbers],
+                                    [[list(l) for l in fnames] for fnames in all_names]))
+
+    from json import dump
+
+    with open(f'/disks/cosmodm/vdvuurst/data/func_nums_to_names.json', 'w') as f:
+        dump(num_to_func_dict, f, indent = 2)
+
+    print(f'There are {combi_subsample.shape[0]} subsampled function combinations')
+    print(f'There are {len(all_combis)} function combinations')
 
