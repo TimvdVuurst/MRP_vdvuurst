@@ -32,31 +32,30 @@ def poly_3_func(x, a, b, c, d):
 def poly_4_func(x, a, b, c, d, e):
     return a*np.power(x,4) + b*np.power(x, 3) + c* np.square(x) + d*x + e
 
-lambda_r_funcs = [exponential_func,inverse_func]
-sigma_1_r_funcs = [poly_3_func, poly_4_func]
+lambda_r_funcs = [inverse_func]
+sigma_1_r_funcs = [poly_3_func]
 sigma_2_r_funcs = [linear_func, parabola_func]
 
 m_funcs = [linear_func, parabola_func, exponential_func]
-
 
 no_params = lambda f: len(signature(f).parameters) - 1
 get_func_name = lambda f: f.__name__.split('_func')[0]
 
 m_func_names = [get_func_name(m) for m in m_funcs]
-# lambda_r_func_names = [get_func_name(r) for r in lambda_r_funcs]
-# sigma_1_func_names = [get_func_name(r) for r in sigma_1_r_funcs]
-# sigma_2_func_names = [get_func_name(r) for r in sigma_2_r_funcs]
 
 def flatten(xss):
     return [x for xs in xss for x in xs]
 
 def create_function_combinations(funclist): 
-    func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
+    # func_combis = [list(product([rfunc], list(combinations_with_replacement(m_funcs, no_params(rfunc))))) for rfunc in funclist]
+    func_combis = [list(product([rfunc], list(product(m_funcs, repeat = no_params(rfunc))))) for rfunc in funclist]
     return flatten(func_combis)
 
 def create_function_combination_namelist(funclist):
-    name_combis = [list(product([get_func_name(rfunc)], list(combinations_with_replacement(m_func_names, no_params(rfunc))))) for rfunc in funclist]
+    # name_combis = [list(product([get_func_name(rfunc)], list(combinations_with_replacement(m_func_names, no_params(rfunc))))) for rfunc in funclist]
+    name_combis = [list(product([get_func_name(rfunc)], list(product(m_func_names, repeat = no_params(rfunc))))) for rfunc in funclist]
     return flatten(name_combis)
+
 
 lambda_funcs = create_function_combinations(lambda_r_funcs)
 sigma_1_funcs = create_function_combinations(sigma_1_r_funcs)
@@ -72,11 +71,13 @@ combi_numbers = np.arange(len(all_names)) + 1
 
 # Subsampling
 np.random.seed(42)
-combi_subsample_idx = np.random.choice(len(all_combis),size = len(all_combis)//100) #1% subsample 
+combi_subsample_idx = np.random.choice(len(all_combis),size = len(all_combis)//10) #10% subsample ~ 2.5k 
 all_combis = np.array(all_combis, dtype=object)
 combi_subsample = all_combis[combi_subsample_idx]
 combi_subsample_names = np.array(all_names, dtype = object)[combi_subsample_idx]
 combi_subsamples_numbers = combi_numbers[combi_subsample_idx]
+
+subsample_num_to_idx = dict(zip(combi_subsamples_numbers, np.arange(combi_subsamples_numbers.size)))
 
 if __name__ == '__main__':
     num_to_func_dict = dict(zip([int(c) for c in combi_numbers],
@@ -89,4 +90,7 @@ if __name__ == '__main__':
 
     print(f'There are {combi_subsample.shape[0]} subsampled function combinations')
     print(f'There are {len(all_combis)} function combinations')
-
+    
+    from ONEHALO import param_info
+    no_params_all = [param_info(c)[2] for c in all_combis]
+    print(f'At least: {np.min(no_params_all)} params and at most {np.max(no_params_all)}')

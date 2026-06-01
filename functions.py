@@ -6,7 +6,7 @@ from typing import Callable
 import os
 
 # sigma_1, sigma_2, lambda
-GLOBAL_PRIOR_RANGE = [[1., 1500.], [1., 1500.], [0., 0.5]]
+GLOBAL_PRIOR_RANGE = [[1., 2000.], [1., 2000.], [0., 1.]]
 SQRT2PI_FAC = 1 / np.sqrt(2 * np.pi)
 
 ## FUNCTIONS FOR ONEHALO LIKELIHOODS
@@ -32,7 +32,7 @@ def double_gaussian_integral_loglambda(sigma1,sigma2,lambda_,x_i,x_f):
     integral, _ = Romberg(x_i, x_f, lambda x: double_gaussian_loglambda(x,sigma1,sigma2,lambda_)) 
     return integral
 
-def log_prior(theta):
+def log_prior(theta, enforce_sigma_2_smaller: bool = False):
     sigma_1, sigma_2, lambda_ = theta
     
     if None in GLOBAL_PRIOR_RANGE[0]: # sigma_1 must be larger than sigma_2
@@ -44,8 +44,10 @@ def log_prior(theta):
         sigma_2_prior = GLOBAL_PRIOR_RANGE[1][0] <= sigma_2 < sigma_1
     else:
         sigma_2_prior = GLOBAL_PRIOR_RANGE[1][0] <= sigma_2 <= GLOBAL_PRIOR_RANGE[1][1]
+        if enforce_sigma_2_smaller:
+            sigma_2_prior = sigma_2_prior * (sigma_2 < (sigma_1 - 5.))
     
-    lambda_prior = GLOBAL_PRIOR_RANGE[2][0] <= lambda_ <= GLOBAL_PRIOR_RANGE[2][1]
+    lambda_prior = GLOBAL_PRIOR_RANGE[2][0] <= lambda_ <= GLOBAL_PRIOR_RANGE[2][1] #GLOBAL was set to 1 for the joint model, should be 0.5 here
 
     if sigma_1_prior and sigma_2_prior and lambda_prior:
         return 0.0
@@ -74,16 +76,16 @@ def double_gaussian_log_likelihood_binned(params, bin_edges, bin_heights): #full
     
     return log_L
 
-def double_gaussian_log_likelihood(params, data, loglambda, single_gauss): #full with prior
-    lp = log_prior(params)
+def double_gaussian_log_likelihood(params, data, loglambda, single_gauss, enforce_sigma_2_smaller: bool = False): #full with prior
+    lp = log_prior(params, enforce_sigma_2_smaller)
     if not np.isfinite(lp):
-        return -np.inf
+        return np.inf
 
     if single_gauss: params[-1] = 0
 
     mu_func = double_gaussian_loglambda if loglambda else double_gaussian
     mu_i = mu_func(data, *params)
-    return np.sum(np.log10(mu_i)) + 1. #+1. for integral, chose log10 to stay consistent
+    return - 1* (np.sum(np.log(mu_i)) + 1.)
 
 def double_gaussian_neg_log_likelihood_binned(params, bin_edges, bin_heights):
     sigma1, sigma2, lambda_ = params
@@ -142,7 +144,7 @@ def log_prior_vec(theta: list | tuple | np.ndarray):
     prior = np.where(cond, 0, np.inf)
 
     # so that it can also be used unvectorized if we want
-    if theta.size == 3:
+    if np.size(theta) == 3:
         return np.float32(prior)
     return prior
 
@@ -194,8 +196,7 @@ def log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_
     min_half_v_sq_sigma_1 = min_half_v_sq * sigma1_sq_inv[:, np.newaxis]
     min_half_v_sq_sigma_2 = min_half_v_sq * sigma2_sq_inv[:, np.newaxis]
 
-    p = np.sum(min_half_v_sq_sigma_1 + np.log(one_min_lambda[:, np.newaxis] + lambda_[:, np.newaxis] * np.exp(min_half_v_sq_sigma_2 - min_half_v_sq_sigma_1)))
-    return p
+    return np.sum(min_half_v_sq_sigma_1 + np.log(one_min_lambda[:, np.newaxis] + lambda_[:, np.newaxis] * np.exp(min_half_v_sq_sigma_2 - min_half_v_sq_sigma_1)))
 
 def double_gaussian_log_likelihood_vec(params: np.ndarray, min_half_v_sq: np.ndarray, single_gauss: bool = False) -> np.float64:
     """ Calculates the negative log-likelihood of the double gaussian model. Uses the log_double_gaussian_vec for this.
@@ -218,7 +219,7 @@ def double_gaussian_log_likelihood_vec(params: np.ndarray, min_half_v_sq: np.nda
     mu = log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
     L = mu + np.sum(np.log(norm))
     
-    return -L
+    return -1*L
 
 
 # GOODNESS OF FIT STATISTICS (OUTDATED)
@@ -428,7 +429,7 @@ def perturb_around_likelihood(params: np.array, log_likelihood_func: Callable[[n
     return param_dict
 
 
-# GENERAL FUNCTIONS AND OWN NUMERICAL METHODS USED THROUGHOUT
+### GENERAL FUNCTIONS AND OWN NUMERICAL METHODS USED THROUGHOUT
 
 def Romberg(a,b,func,m=6):
     """Romberg's algorithm for integration using Richardson extrapolation.
@@ -481,11 +482,11 @@ def modified_logspace(start, stop, num, base = 10):
 
     return res
 
-def BIC(L, n, k = 3):
-    #L is assumed already as a logarithm and as a MAXIMUM
+def BIC(logL, n, k = 3):
+    #logL, note this is not minlogL!
     #n : no. data points
     #k: no. parameters
-    return (k * np.log(n)) - 2 * L
+    return (k * np.log(n)) - 2 * logL
 
 def mkdir_if_non_existent(path):
     if not os.path.isdir(path):
@@ -498,3 +499,13 @@ def flatten(xss):
 def rice_bins(N):
     return 2 * int(np.cbrt(N))
 
+def extract_mass_and_rad_from_filename(fname):
+    mass_string, rad_string = fname.split('/')[-2:]
+    
+    mass_string = mass_string.strip('M_')
+    mlow, mhigh = np.array(mass_string.split('-'), dtype = np.float32) - 10. #to right units
+
+    rad_string = rad_string.strip('r_')
+    rlow, rhigh = np.array(rad_string.split('-'), dtype = np.float32)
+
+    return mlow, mhigh, rlow, rhigh

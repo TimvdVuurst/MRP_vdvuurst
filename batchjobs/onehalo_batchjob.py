@@ -14,7 +14,7 @@ from onehalo_plotter import format_plot
 from argparse import ArgumentParser
 from tqdm import tqdm
 from multiprocessing import Pool
-from functions import modified_logspace, rice_bins, mkdir_if_non_existent
+from functions import modified_logspace, rice_bins, mkdir_if_non_existent, extract_mass_and_rad_from_filename
 from itertools import product
 
 from warnings import filterwarnings
@@ -40,8 +40,8 @@ parser.add_argument('-RU', '--rad_unit', type = str, default = 'Rvir', choices =
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
-parser.add_argument('-NW', '--num_walkers', type = int, default = 10, help = 'Number of MCMC walkers passed to emcee.')
-parser.add_argument('-NS', '--num_steps', type = int, default = 250, help = 'Number of walker steps passed to emcee.')
+parser.add_argument('-NW', '--num_walkers', type = int, default = 20, help = 'Number of MCMC walkers passed to emcee.')
+parser.add_argument('-NS', '--num_steps', type = int, default = 300, help = 'Number of walker steps passed to emcee.')
 
 #Efficiency controllers
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
@@ -98,13 +98,12 @@ else:
 
 # hardcoded in here, these are the only bins we want to flip the sigmas for
 flip_bins = 'r_0.00-0.07'
-
 # create kwarg dictionary from default values and terminal input
 default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = args.r_bins, r_unit = r_unit, bins= rice_bins, plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
                             return_values = False, loglambda = loglambda, single_gauss = single_gauss, flip_sigmas = flip_sigmas,
-                            flip_bins = flip_bins, timeit = timeit)
+                            flip_bins = flip_bins, timeit = timeit, is_rerun = False)
 
 
 def _create_iterable_input(**kwargs):
@@ -124,13 +123,13 @@ def _create_iterable_input(**kwargs):
 
     # we need a fitter object for every mass bin
     fitters = []
-    for i,mass_bin in enumerate(mass_bins):
+    for i,mass_bin in enumerate(kwargs['mass_bins']):
         filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
         filepath =  os.path.join(data_dir, filename)
 
         #create fitter objects to use. Only need it to load in data if we use 
         # non-catalogued data (i.e. we need to calculate the radial bin masks within the function)
-        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'], load = not catalogued)
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'], load = not catalogued, enforce_sigma_2_smaller = True)
 
         fitters.append(fitter)
 
@@ -145,7 +144,6 @@ def _run_experiment_radial_bins(inpt):
         fitter, mass_bin, rbin, kwargs = inpt
         mass_path = os.path.join(data_dir, f'M_1{mass_bin[0]}-1{mass_bin[1]}')
         fitter.fit_to_catalogued_bin(rbin = rbin, datapath = mass_path, **kwargs)
-        # tqdm.write(f'M 1{mass_bin[0]}-1{mass_bin[1]} r {rbin[0]:.2f}-{rbin[1]:.2f} COMPLETED')
 
     else:
         fitter, mass_bin, kwargs = inpt
@@ -163,8 +161,11 @@ if multiprocess:
 
     if not catalogued and multiprocess:
         NPROCS = len(mass_bins) # 1 per mass bin, so 7 for default run
-    # else: # for the catalogued data we also parallelize on radial bins
-    #     NPROCS = 32
+
+    #logfile to keep track of bad fits in the process
+    #create it and/or empty it
+    with open('./logs/bad_fits_onehalo.txt', 'w') as f:
+        f.close()
 
     overhead = time() - now
 
@@ -173,6 +174,36 @@ if multiprocess:
     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
         for _ in p.imap_unordered(_run_experiment_radial_bins, iterable_input):
             pbar.update()
+    
+    # Now repeat the process for the bad fits without enforcing sigma_1 > sigma_2 explicitly
+    with open('./logs/bad_fits_onehalo.txt', 'r') as f:
+        bad_bins = f.readlines()
+    
+    num_bad_bins = len(bad_bins)
+    print(f'Found {num_bad_bins} bad bins{', refitting...' if num_bad_bins != 0 else '.'}')
+    if num_bad_bins != 0:
+        mass_bins = [[*extract_mass_and_rad_from_filename(bb)[:2]] for bb in bad_bins]
+        rad_bins = [[*extract_mass_and_rad_from_filename(bb)[2:]] for bb in bad_bins]
+  
+        fitters = []
+        for i,mass_bin in enumerate(mass_bins):
+            filename =  f'M_1{mass_bin[0]}-1{mass_bin[1]}.hdf5'
+            filepath =  os.path.join(data_dir, filename)
+
+            #create fitter objects to use. Only need it to load in data if we use 
+            # non-catalogued data (i.e. we need to calculate the radial bin masks within the function)
+            fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = default_kwargs['loglambda'], load = not catalogued, enforce_sigma_2_smaller = False) #this last argument is the crucial difference here
+            fitters.append(fitter)
+
+        fitters_and_mass_bins = list(zip(fitters, mass_bins))
+        default_kwargs['is_rerun'] = True
+        # default_kwargs['flip_sigmas'] = True
+        iterable_input = [[f, m, r, default_kwargs] for (f,m), r in zip(fitters_and_mass_bins, rad_bins)]
+        if NPROCS > num_bad_bins: NPROCS = num_bad_bins
+
+        with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
+            for _ in p.imap_unordered(_run_experiment_radial_bins, iterable_input):
+                pbar.update()
 
 else:
     match args.method.lower():
@@ -186,7 +217,7 @@ else:
 
                 filehead = filename.split('.hdf5')[0]
 
-                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = default_kwargs['loglambda'])
+                fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = default_kwargs['loglambda'], enforce_sigma_2_smaller = True)
                                         # initial_param_file = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/minimize/{filehead}.json')
                 
                 if create_range:

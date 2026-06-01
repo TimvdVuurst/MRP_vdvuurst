@@ -171,10 +171,9 @@ class TWOHALO:
         dset_shape_full = (secondary_selection_size - intersection_length) * (primary_selection_size - intersection_length) + \
                      (intersection_length * (secondary_selection_size - 1))
 
-            # both radial distances and velocities are projected so that they're 1D
+        # both radial distances and velocities are projected so that they're 1D
 
         # Save everything in memory to mitigate I/O usage throughout
-        # Change to updating the dsets in the 
         array_radial = np.zeros(dset_shape_full//20, dtype = np.float32)
         array_velocities = np.zeros(dset_shape_full//20, dtype = np.float32)
         array_prim_masses = np.zeros(dset_shape_full//20, dtype = np.float32)

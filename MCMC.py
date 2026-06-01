@@ -1,3 +1,6 @@
+## Created by Tim van der Vuurst (2026) for Master's Thesis
+## Inspired by emcee. 
+
 import numpy as np
 from typing import Callable
 from tqdm import tqdm
@@ -65,8 +68,15 @@ class MCMC:
                 steps_taken += 1
 
 
-    def get_likelihoods(self):
-        return self.likelihood_chain
+    def get_likelihoods(self, discard: int | None = None, thin: int | None = None):
+        if thin is None and discard is None:
+            return self.likelihood_chain
+        elif thin is None:
+            return self.likelihood_chain[..., discard:]
+        elif discard is None:
+            return self.likelihood_chain[..., ::thin]
+        else:
+            return self.likelihood_chain[..., discard::thin]
     
     def get_chain(self, discard: int | None = None, thin: int | None = None):
         if thin is None and discard is None:
