@@ -144,8 +144,8 @@ if __name__ == '__main__':
     from functional_forms import *
 
     ## To delete the old combinations 
-    if bool(args.delete_previous):
-        fp = '/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions/Nelder-Mead'
+    if bool(args.delete_existing):
+        fp = f'/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions/{args.method}'
         print('Deleting existing intial conditions...')
         for i in tqdm(os.listdir(fp)):
             filename = os.path.join(fp, i)
@@ -172,7 +172,7 @@ if __name__ == '__main__':
             iterable_input = list(zip(combi_subsample, combi_subsample_names, combi_subsamples_numbers))
             tot = len(combi_subsample)
         else:
-            already_existing_numbers = [int(f.split('_')[-1].strip('.npy')) for f in os.listdir(DATA_SAVE_PATH)]
+            already_existing_numbers = [int(f.split('_')[-1].strip('.npy')) for f in os.listdir(DATA_SAVE_PATH) if '.npy' in f]
             rerun_mask = np.invert(np.isin(combi_subsamples_numbers, already_existing_numbers))
             iterable_input = list(zip(combi_subsample[rerun_mask], combi_subsample_names[rerun_mask], combi_subsamples_numbers[rerun_mask]))
             tot = rerun_mask.sum()
@@ -211,11 +211,13 @@ if __name__ == '__main__':
         for i, cnr in iterable:
             DG_init_i = get_init_DG_from_combi_nr(cnr, init_path = init_path)
             
-            sigma_1_init, *_ = DG_init_i
+            sigma_1_init, sigma_2_init, _ = DG_init_i
         
-            if np.all(sigma_1_init == 2000.):
+            if np.all(sigma_1_init == 2000.) or np.all(sigma_1_init == 1.):
                 bad_cnrs.append(cnr)
-
+            
+            elif np.all(sigma_1_init == 2000.) or np.all(sigma_2_init == 1.):
+                bad_cnrs.append(cnr)
 
         return np.array(bad_cnrs)
 
@@ -225,12 +227,12 @@ if __name__ == '__main__':
         cnrs_to_check = combi_numbers if use_full_set else combi_subsamples_numbers
         good_cnrs = np.delete(cnrs_to_check, np.array(bad_cnrs) - 1) if use_full_set else np.delete(cnrs_to_check, [subsample_num_to_idx[bcnr] for bcnr in bad_cnrs])
 
-        print(f'We find {bad_cnrs.shape[0]} bad combinations and {good_cnrs.shape[0]} good ones. Total is {cnrs_to_check.size}. Rerunning bad ones with flip sigmas...')
+        print(f'We find {bad_cnrs.shape[0]} bad combinations and {good_cnrs.shape[0]} good ones. Total is {cnrs_to_check.size}. ', end ='')
 
         return bad_cnrs
 
     bad_cnrs = verify_initials()
-
+    print('Rerunning bad ones with flip sigmas...')
     if use_full_set:
         bad_cnrs_mask = np.isin(combi_numbers, bad_cnrs)
         iterable_input = list(zip(all_combis[bad_cnrs_mask], all_names[bad_cnrs_mask], combi_numbers[bad_cnrs_mask]))
@@ -244,6 +246,6 @@ if __name__ == '__main__':
         for _ in p.imap_unordered(create_and_store_initial_conditions_flip_sigmas, iterable_input):
             pbar.update()
 
-
     verify_initials()
+    print('Leaving it at that.')
     

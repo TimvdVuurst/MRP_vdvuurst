@@ -32,7 +32,7 @@ def poly_3_func(x, a, b, c, d):
 def poly_4_func(x, a, b, c, d, e):
     return a*np.power(x,4) + b*np.power(x, 3) + c* np.square(x) + d*x + e
 
-lambda_r_funcs = [inverse_func]
+lambda_r_funcs = [exponential_func]
 sigma_1_r_funcs = [poly_3_func]
 sigma_2_r_funcs = [linear_func, parabola_func]
 
