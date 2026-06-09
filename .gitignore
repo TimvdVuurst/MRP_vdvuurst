@@ -3,3 +3,4 @@ RSDenv
 figures
 *.h5
 __pycache__
+logs
