@@ -76,8 +76,8 @@ class TwoHaloPlotter:
             bin_velocities = self.velocities[bin_mask]
 
             ax = axes[bin_idx]
-            ax.set_xlabel("Velocity Difference ")
-            ax.set_ylabel("Count")
+            ax.set_xlabel(r"$v_{\mathrm{2h}}$ [km/s]")
+            ax.set_ylabel("Density")
             ax.set_title(f"{self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc")
 
             if len(bin_velocities) == 0:
@@ -95,10 +95,10 @@ class TwoHaloPlotter:
         if savefig:
             # TODO: find better filename structure
             if self.is_subsample:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
             else:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
-            plt.savefig(filename, dpi=300,bbox_inches = 'tight')
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
+            plt.savefig(filename,bbox_inches = 'tight')
         if showfig:
             plt.show()
         
@@ -131,12 +131,11 @@ class TwoHaloPlotter:
             bin_mask = bin_indices == bin_idx
             bin_velocities = self.velocities[bin_mask]
             N = bin_velocities.size
-            # print(f'LOOK HERE!!!! {N}')
             if N == 0:
                 continue
 
             self.mean[bin_idx] = np.mean(bin_velocities)
-            self.dispersion[bin_idx] = np.std(bin_velocities)
+            self.dispersion[bin_idx] = np.std(bin_velocities, ddof = 1)
             self.skews[bin_idx] = skew(bin_velocities, bias = False)
             self.kurt[bin_idx] = kurtosis(bin_velocities, fisher = False, bias = False)
 
@@ -159,7 +158,7 @@ class TwoHaloPlotter:
         axes[3].plot(self.radial_bins[:-1], self.kurt, marker='s', c = 'blue')
         nonzero_error = np.nonzero(self.kurt_error)
         axes[3].errorbar(self.radial_bins[:-1][nonzero_error], self.kurt[nonzero_error], yerr = self.kurt_error[nonzero_error], fmt =',', capsize=3, color = 'blue')
-        axes[3].set(xlabel = r'radial distance $r$', ylabel = r'Kurtosis $k$')
+        axes[3].set(xlabel = r'Two-halo distance $r_{\mathrm{2h}}$ [Mpc]', ylabel = r'Kurtosis $k$')
 
         for ax in axes:
             ax.grid()
@@ -170,8 +169,8 @@ class TwoHaloPlotter:
             #     filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_subsample_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             # else:
             if filename is None:
-                filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
-            plt.savefig(filename, dpi = 200, bbox_inches = 'tight')
+                filename = f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
+            plt.savefig(filename, bbox_inches = 'tight')
         if showfig:
             plt.show()
         
@@ -184,6 +183,8 @@ if __name__ == '__main__':
     root = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
     for file in tqdm(os.listdir(root)):
         filepath = os.path.join(root, file)
+        if filepath == '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_13.0-13.5_M2_13.5-14.0.hdf5':
 
-        plotter = TwoHaloPlotter(filepath)
-        plotter.plot_velocity_histograms()
+            plotter = TwoHaloPlotter(filepath)
+            plotter.plot_velocity_histograms()
+            plotter.plot_moments()

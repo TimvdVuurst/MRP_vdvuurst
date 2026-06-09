@@ -6,13 +6,13 @@ import os
 import numpy as np
 from ONEHALO import ONEHALO
 import argparse
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from functions import modified_logspace, mkdir_if_non_existent
 
 SOAP_PATH_DEFAULT = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOAP-HBT/halo_properties_0077.hdf5"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-C','--catalogue', type = str, default = 'rad',  help = 'Select whether to create mass, radial or both catalogues. Both means mass and radial catalogues. Defaults to radial.')
+parser.add_argument('-C','--catalogue', type = str, default = 'rad',  help = 'Select whether to create full, mass, radial or both catalogues. Both means mass and radial catalogues. Defaults to radial.')
 parser.add_argument('-M1','--lower_mass', type = np.float32, default = 2, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 2.')
 parser.add_argument('-M2','--upper_mass', type = np.float32, default = 5.5, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive! Defaults to 5.5.') #always EXCLUSIVE upper bound
 
@@ -25,6 +25,7 @@ parser.add_argument('-S', '--step', type = np.float32, default = 0.5, help = 'Si
 parser.add_argument('-P', '--path_to_soap', type = str, default = SOAP_PATH_DEFAULT, help = 'Path specifying the SOAP-HBT data to be used. Should point to SOAP hdf5 file. Defaults to L1000N1800 @ z= 0.')
 parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a catalogue already exist, control whether to overwrite it. 1 for True, 0 for False.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
+parser.add_argument('-SMF', '--stellar_mass_cutoff', type = float, default = 0.9, help = 'Throw away all subhalo data with StellarMass lower than the specified amount in units of 10^10 Msun. If <= 0, no data will be thrown based on this criterium. Defaults to 0.8 (based on visual inspection of the SMF')
 
 args = parser.parse_args()
 
@@ -59,7 +60,7 @@ mkdir_if_non_existent(data_dir)
 overwrite = bool(args.overwrite)
 verbose = bool(args.verbose)
 
-onehalo = ONEHALO(SOAP_PATH_DEFAULT)
+onehalo = ONEHALO(SOAP_PATH_DEFAULT, verbose = verbose)
 print('SOAP data loaded in and preprocessed.')
 
 def create_mass_catalogue(mass_bin, mass_filename, mass_filepath):
@@ -98,7 +99,7 @@ def create_rad_catalogue(mass_filename):
                     tqdm.write(f'{mass_head}/{rad_filename} contains too little datapoints, skipping...')
 
 def create_full_catalogue():
-    onehalo.create_full_dataset((args.lower_mass, args.upper_mass), '/disks/cosmodm/vdvuurst/data/Onehalo_M_12-15.5.hdf5', ur, verbose = verbose)
+    onehalo.create_full_dataset((args.lower_mass, args.upper_mass), '/disks/cosmodm/vdvuurst/data/Onehalo_M_12-15.5.hdf5', ur)
 
 if __name__ == '__main__':
     if choice in ['mass', 'both']:

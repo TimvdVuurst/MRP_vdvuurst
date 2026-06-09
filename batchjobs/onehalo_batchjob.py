@@ -41,7 +41,7 @@ parser.add_argument('-O', '--overwrite', type = int, default = 1, help = 'If a c
 parser.add_argument('-M', '--method', type = str, default = 'emcee', help = 'Fitting procedure. Choose either emcee, minimize or both.')
 parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Whether to print diagnostics and timings. 1 for True, 0 for False.')
 parser.add_argument('-NW', '--num_walkers', type = int, default = 20, help = 'Number of MCMC walkers passed to emcee.')
-parser.add_argument('-NS', '--num_steps', type = int, default = 300, help = 'Number of walker steps passed to emcee.')
+parser.add_argument('-NS', '--num_steps', type = int, default = 500, help = 'Number of walker steps passed to emcee.')
 
 #Efficiency controllers
 parser.add_argument('-C', '--catalogued', type = int, default = 1, help = 'Whether radial bins are precalculated (and catalogued). 1 for True. Default is 1.')
@@ -96,14 +96,15 @@ else:
         raise ValueError('This should not have happened, how did you get another radial unit?')
     create_range = True
 
-# hardcoded in here, these are the only bins we want to flip the sigmas for
-flip_bins = 'r_0.00-0.07'
+# hardcoded in here, these are the only bins we want to NOT rerun if lambda > 0.5
+
+flip_bins = ['M_12.0-12.5-r_0.00-0.07','M_12.5-13.0-r_0.00-0.07', 'M_13.0-13.5-r_0.00-0.07', 'M_12.0-12.5-r_0.07-0.14']
 # create kwarg dictionary from default values and terminal input
 default_kwargs = create_kwargs(r_start= lr, r_stop = ur, r_steps = args.r_bins, r_unit = r_unit, bins= rice_bins, plot= True,
                             nwalkers = args.num_walkers, nsteps = args.num_steps, non_bin_threshold = -1,
                             distname = 'Modified Gaussian', verbose = verbose, save_params = True, overwrite = overwrite,
                             return_values = False, loglambda = loglambda, single_gauss = single_gauss, flip_sigmas = flip_sigmas,
-                            flip_bins = flip_bins, timeit = timeit, is_rerun = False)
+                            flip_bins = flip_bins, timeit = timeit, is_rerun = False, skip_rerun = False)
 
 
 def _create_iterable_input(**kwargs):
@@ -197,7 +198,6 @@ if multiprocess:
 
         fitters_and_mass_bins = list(zip(fitters, mass_bins))
         default_kwargs['is_rerun'] = True
-        # default_kwargs['flip_sigmas'] = True
         iterable_input = [[f, m, r, default_kwargs] for (f,m), r in zip(fitters_and_mass_bins, rad_bins)]
         if NPROCS > num_bad_bins: NPROCS = num_bad_bins
 

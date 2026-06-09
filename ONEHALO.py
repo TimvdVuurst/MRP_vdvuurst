@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
 from typing import Tuple
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import os
 from functions import *
@@ -41,7 +41,13 @@ def str_from_rbin(rbin):
     return f'r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 
 class ONEHALO:
-    def __init__(self, PATH: str):
+    def __init__(self, PATH: str, verbose: bool = True):
+        """_summary_
+
+        Args:
+            PATH (str): _description_
+            verbose (bool): whether or not to output intermittent updates. Defaults to True.
+        """
         self.PATH = PATH # Path to SOAP Catalogue
 
         with h5py.File(self.PATH, "r") as handle:
@@ -62,17 +68,21 @@ class ONEHALO:
         # ~IsCentral picks out sattelites, this picks out all centrals !that host sattelites! and how many sattelites they host
         self.HostHaloIDs, self.subhalos_per_host_tot = np.unique(self.HostHaloIndex[~self.IsCentral], return_counts = True) 
 
+        self.verbose = verbose
+
     def create_full_dataset(self, mass_range: Tuple[np.float32,np.float32], filename: str,
-                             r_max: np.float32 = 2.5, verbose: bool = False, create_subsample: bool = True):
+                            r_max: np.float32 = 2.5,
+                            create_subsample: bool = True,
+                            StellarMassCutOff: float | None = 0.8):
         """ Create a full catalogue of halo mass, relative velocities and positions in a given mass range (so NOT binning!).
 
         Args:
             mass_range (Tuple[np.float32,np.float32]): Massbin in units of 10^10 Msol. Lower, upper.
             filename (str): string specifying the full path to which the data is saved (must end on .hdf5)
-            r_max (float) : maximum radius to allow. Defualts to 2.5
-            verbose (bool): whether or not to output intermittent updates. Defaults to False.
+            r_max (float) : maximum radius to allow. Defaults to 2.5
             create_subsample(bool, optional): whether to create a uniformly subsampled (1%) dataset as well. Defaults to True.
-
+            StellarMassCutOff (float | None, optional): Throw away all subhalo data with StellarMass lower than the specified amount in units of 10^10 Msun. 
+                                                        If None, no data will be thrown based on this criterium. Defaults to 0.8 (based on visual inspection of the SMF of L100N1800).
         """
         lower_mass, upper_mass = mass_range
         mass_mask = _make_mass_mask(self.SOMass, lower_mass, upper_mass)
@@ -85,15 +95,49 @@ class ONEHALO:
         subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask]
         HostIndices = self.HostHaloIDs[Relevant_Hosts_mask] 
 
-        SatteliteMask = np.isin(self.HostHaloIndex, HostIndices) 
-        if verbose: print('Sattelites found')
+        SatelliteMask = np.isin(self.HostHaloIndex, HostIndices) 
+        if self.verbose: print('Satellites found')
 
         HostCOMs, HostVels = self.COM[HostIndices], self.COMvelocity[HostIndices]
         HostMasses = self.SOMass[HostIndices]
 
-        SatSorter = np.argsort(self.HostHaloIndex[SatteliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
-        SatCOMs, SatVels = self.COM[SatteliteMask][SatSorter], self.COMvelocity[SatteliteMask][SatSorter]
-        if verbose: print('Sattelites sorted')
+        SatSorter = np.argsort(self.HostHaloIndex[SatelliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
+        SatCOMs, SatVels = self.COM[SatelliteMask][SatSorter], self.COMvelocity[SatelliteMask][SatSorter]
+        if self.verbose: print('Satellites sorted')
+
+        SatStellarMass = self.SubHaloStellarMass[SatelliteMask][SatSorter]
+        
+        if StellarMassCutOff is None:
+                StellarMassCutOffMask = np.full_like(SatStellarMass, True, dtype = bool)
+                if self.verbose: print('No StellarMass cut-off specified.')
+        else:
+            StellarMassCutOffMask = SatStellarMass >= StellarMassCutOff
+            if self.verbose: print(f'Stellar Mass cut-off: selecting {StellarMassCutOffMask.sum()}/{SatStellarMass.size} '\
+                              f'({StellarMassCutOffMask.sum()/SatStellarMass.size * 100:.1f}%) subhaloes.')
+
+            if self.verbose: print('Creating and saving SMF plot...')
+            fig,ax = plt.subplots()
+
+            nbins = rice_bins(SatStellarMass.size)
+            logbins = np.logspace(np.log10(np.min(SatStellarMass[np.nonzero(SatStellarMass)])), np.log10(SatStellarMass.max()), nbins)
+            counts, bins,_ = ax.hist(SatStellarMass, bins = logbins)
+            bin_centres = [np.mean(bins[i:i+1]) for i in range(len(counts))]
+
+            ax.plot(bin_centres, counts, c= 'black')
+            ax.set_yscale('log')
+            ax.set_xscale('log')
+            ax.set_ylabel('Counts', fontsize = 16)
+            ax.set_xlabel(r'$\log_{10} \left( M_{\star} / \mathrm{M}_{\odot}\right)$', fontsize = 16)
+
+            xticks_pos = ax.get_xticks()
+            xticks_labels = (np.log10(xticks_pos) + 10).astype(str) # Transform ticklabels to better units
+            ax.set_xticks(xticks_pos, xticks_labels)
+
+            ax.grid(which = 'major')
+            ax.vlines(StellarMassCutOff, 0, np.max(counts), zorder = 10, colors='red', linestyles='--', alpha = 0.75)
+            fig.tight_layout()
+            fig.savefig('./figures/SMF_cutoff.pdf', dpi = 500)
+            plt.close()
 
         # Get the virial radii for all sattelites in order
         self.SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
@@ -103,44 +147,36 @@ class ONEHALO:
         # Get the virial radii for all sattelites in order and transform coordinates
         SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
         rel_dist = np.sqrt(np.square(relative_COMs).sum(axis = 1)) / SatRvirs 
-        relative_COMS = relative_COMS / SatRvirs
+        relative_COMs = relative_COMs / SatRvirs[:, np.newaxis]
         HostMasses = np.repeat(HostMasses, subhalos_per_host, axis = 0)
 
-        if verbose: print('All sattelite data found, applying masks...')
+        if self.verbose: print('All satellite data found, applying masks...')
 
         radial_mask = rel_dist < r_max # We set a maximum distance, beyond this we do not consider it to be an effect of the one halo term
 
-        relative_COMs = relative_COMs[radial_mask]
-        rel_dist = rel_dist[radial_mask]
-        relative_vels = relative_vels[radial_mask, :]
-        HostMasses = np.log10(HostMasses[radial_mask]) # Save in dex!
-
-        # Some datapoints have such velocities as to incur overflow errors (exponential of -0.5v is returned as 0), so we prune those
-        # HOWEVER we prune it in such a way that the entire velocity vector is thrown, otherwise we get a lot of issues later on
-        # TODO: verify with Marcel that this is ok
-        # usable_mask = np.full_like(HostMasses, True, dtype = bool)
-        usable_mask = np.invert(np.any(np.exp((-0.5 * np.square(relative_vels)) / (2 * np.min((GLOBAL_PRIOR_RANGE[0][1], GLOBAL_PRIOR_RANGE[1][1]))**2)) == 0, axis = 1))
-        if verbose: print(f'There are {usable_mask.sum()} usuable velocity vectors, that is {usable_mask.sum()/HostMasses.size * 100:.1f}%, removing the rest...')
+        relative_COMs = relative_COMs[radial_mask * StellarMassCutOffMask]
+        rel_dist = rel_dist[radial_mask * StellarMassCutOffMask]
+        relative_vels = relative_vels[radial_mask * StellarMassCutOffMask, :]
+        HostMasses = np.log10(HostMasses[radial_mask * StellarMassCutOffMask]) # Save in dex!
 
         with h5py.File(filename, 'w') as file:
-            file.create_dataset('rel_pos', data  = relative_COMs[usable_mask], dtype = np.float32)
-            file.create_dataset('rel_dist', data = rel_dist[usable_mask], dtype = np.float32)
-            file.create_dataset('rel_vels', data  = relative_vels[usable_mask, :], dtype = np.float32)
-            file.create_dataset('mass', data = HostMasses[usable_mask], dtype = np.float32)
+            file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
+            file.create_dataset('rel_dist', data = rel_dist, dtype = np.float32)
+            file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+            file.create_dataset('mass', data = HostMasses, dtype = np.float32)
+            # file.create_dataset('stellar_mass', data = SatStellarMass, dtype = np.float32)
         
                 
         if create_subsample:
-            masses = HostMasses[usable_mask]
-            rel_pos = relative_COMs[usable_mask]
-            rel_dist=  rel_dist[usable_mask]
-            rel_vels = relative_vels[usable_mask, :]
+            np.random.seed(42)
+            subsample_idx = np.random.choice(HostMasses.size, size = HostMasses.size // 100, replace = False)
+            print(f'Subsampling {HostMasses.size // 100} subhaloes uniformly...')
 
-            subsample_idx = np.random.choice(masses.size, size = masses.size // 100, replace = False)
-
-            subsample_mass = masses[subsample_idx]
+            subsample_mass = HostMasses[subsample_idx]
             subsample_dist = rel_dist[subsample_idx]
-            subsample_pos = rel_pos[subsample_idx, :]
-            subsample_vels = rel_vels[subsample_idx, :]
+            subsample_pos = relative_COMs[subsample_idx, :]
+            subsample_vels = relative_vels[subsample_idx, :]
+            subsample_stellarmass = SatStellarMass[subsample_idx]
 
             subsample_filename = filename.replace('.hdf5', '_subsampled.hdf5')
             with h5py.File(subsample_filename, 'w') as file:
@@ -148,14 +184,18 @@ class ONEHALO:
                 file.create_dataset('rel_vels', data  = subsample_vels, dtype = np.float32)
                 file.create_dataset('mass', data = subsample_mass, dtype = np.float32)
                 file.create_dataset('rel_dist', data = subsample_dist, dtype = np.float32)
+                # file.create_dataset('stellar_mass', data = subsample_stellarmass, dtype = np.float32)
 
     
-    def create_catalogue(self, massbin: Tuple[np.float32,np.float32], filename: str):
+    def create_catalogue(self, massbin: Tuple[np.float32,np.float32], filename: str, StellarMassCutOff: float | None = 0.8):
         """ Create a catalogue of relative velocities and positions in a given massbin.
 
         Args:
             massbin (Tuple[np.float32,np.float32]): Massbin in units of 10^10 Msol. Lower, upper.
             filename (str): string specifying the full path to which the data is saved (must end on .hdf5)
+            StellarMassCutOff (float | None, optional): Throw away all subhalo data with StellarMass lower than the specified amount in units of 10^10 Msun. 
+                                                        If None, no data will be thrown based on this criterium. Defaults to 0.8 (based on visual inspection of the SMF of L100N1800).
+
         """
         self.lower_mass, self.upper_mass = massbin
         self.filename = filename
@@ -170,25 +210,36 @@ class ONEHALO:
         subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask]
         HostIndices = self.HostHaloIDs[Relevant_Hosts_mask]
 
-        SatteliteMask = np.isin(self.HostHaloIndex, HostIndices) #pick out all the sattelites from relevant hosts
+        SatelliteMask = np.isin(self.HostHaloIndex, HostIndices) #pick out all the sattelites from relevant hosts
+        SatSorter = np.argsort(self.HostHaloIndex[SatelliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
+        
+        SatStellarMass = self.SubHaloStellarMass[SatelliteMask][SatSorter]
+
+        if StellarMassCutOff is None:
+            StellarMassCutOffMask = np.full_like(SatStellarMass, True, dtype = bool)
+            if self.verbose: tqdm.write('No StellarMass cut-off specified.')
+        else:
+            StellarMassCutOffMask = SatStellarMass >= StellarMassCutOff
+            if self.verbose: tqdm.write(f'Stellar Mass cut-off: selecting {StellarMassCutOffMask.sum()}/{SatStellarMass.size} '\
+                              f'({StellarMassCutOffMask.sum()/SatStellarMass.size * 100:.1f}%) subhaloes.')
 
         # Get the host COM pos and vel, same for sattelites
         HostCOMs, HostVels = self.COM[HostIndices], self.COMvelocity[HostIndices]
-        SatSorter = np.argsort(self.HostHaloIndex[SatteliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
-        SatCOMs, SatVels = self.COM[SatteliteMask][SatSorter], self.COMvelocity[SatteliteMask][SatSorter]
-        
+        SatCOMs, SatVels = self.COM[SatelliteMask][SatSorter], self.COMvelocity[SatelliteMask][SatSorter]
         relative_COMs = SatCOMs - np.repeat(HostCOMs, subhalos_per_host, axis = 0)
         relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
 
         # Get the virial radii for all sattelites in order and transform coordinates
         self.SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
-        relative_COMs = relative_COMs / self.SatRvirs 
+        relative_COMs = relative_COMs / self.SatRvirs[:, np.newaxis]
+
+        self.SatRvirs = self.SatRvirs[StellarMassCutOffMask]
 
         with h5py.File(self.filename, 'w') as file:
-            file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
-            file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
+            file.create_dataset('rel_pos', data  = relative_COMs[StellarMassCutOffMask], dtype = np.float32)
+            file.create_dataset('rel_vels', data  = relative_vels[StellarMassCutOffMask], dtype = np.float32)
             
-    def create_radial_catalogue(self, radial_bin: Tuple[np.float32, np.float32], rad_filename:str, mass_filename:str, r_unit: str = 'Rvir'):
+    def create_radial_catalogue(self, radial_bin: Tuple[np.float32, np.float32], rad_filename:str, mass_filename:str, r_unit: str = 'Rvir', StellarMassCutOff: float | None = 0.8):
         with h5py.File(mass_filename, 'r') as handle:
             rel_vels = handle['rel_vels'][:] 
             rel_pos = handle['rel_pos'][:] 
@@ -209,8 +260,21 @@ class ONEHALO:
                 Relevant_Hosts_mask = np.isin(self.HostHaloIDs,HostIndices)
                 HostIndices = self.HostHaloIDs[Relevant_Hosts_mask] 
 
+                SatelliteMask = np.isin(self.HostHaloIndex, HostIndices) #pick out all the sattelites from relevant hosts
+                SatSorter = np.argsort(self.HostHaloIndex[SatelliteMask]) # sorting so that we are sure to compare every sattelite to the right host below
+                
+                SatStellarMass = self.SubHaloStellarMass[SatelliteMask][SatSorter]
+
+                if StellarMassCutOff is None:
+                    StellarMassCutOffMask = np.full_like(SatStellarMass, True, dtype = bool)
+                    if self.verbose: print('No StellarMass cut-off specified.')
+                else:
+                    StellarMassCutOffMask = SatStellarMass >= StellarMassCutOff
+                    if self.verbose: print(f'Stellar Mass cut-off: selecting {StellarMassCutOffMask.sum()}/{SatStellarMass.size} '\
+                                    f'({StellarMassCutOffMask.sum()/SatStellarMass.size * 100:.1f}%) subhaloes.')
+
                 subhalos_per_host = self.subhalos_per_host_tot[Relevant_Hosts_mask] 
-                SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
+                SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)[StellarMassCutOffMask]
 
                 rel_sq_dist = np.square(rel_pos).sum(axis = 1) / np.square(SatRvirs)
 
@@ -323,58 +387,67 @@ class ONEHALO_fitter:
         best_likelihood = likelihoods[best_arg]
         best_params = np.array([samples[i, *best_arg] for i in range(ndim)])
 
-        # We refine the found optimum with a BFGS minimization to get a marginally better result for little time investment
-        ll_func_for_minimize = lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss'], kwargs['enforce_sigma_2_smaller'])
-        new_best_params = minimize(ll_func_for_minimize, x0 = best_params, bounds = pos_ranges.squeeze().T).x
+        # Perturb the best found parameter set for an error estimate
+        # In here, we also perform the BFGS refinement.
+        ll_func_simplified = lambda x: log_likelihood_func(x, data, loglambda, kwargs['single_gauss'], kwargs['enforce_sigma_2_smaller'])
 
-        # Check that we are still in the prior range and didn't diverge out, if we did keep the old result
-        prior_reached = log_prior(new_best_params)
-        if np.isfinite(prior_reached):
-            best_params = new_best_params
-            best_likelihood = ll_func_for_minimize(new_best_params)
-        else:
-            best_likelihood = likelihoods[best_arg]
-
+        param_dict = perturb_around_likelihood(params = best_params, 
+                                               log_likelihood_func = lambda x: -1 *log_likelihood_func(x, data, loglambda, kwargs['single_gauss'], False), #for the error measure, we do not want to enforce sigma_1 > sigma_2, otherwise the error is just the difference between the values 
+                                               single_gauss = kwargs['single_gauss'])
+ 
+        best_params = np.array([param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']])
         if not kwargs['single_gauss']:
             if not kwargs['is_rerun']:
                 # Create or open the log-file to track poor fits which we only do in initial run, NOT rerun
                 with open('./logs/bad_fits_onehalo.txt', 'a+') as f:
                     # We want to run these again after the batch job with different constraints, so note down the mass and rad bin that is bad
-                    if best_params[2] == 0.5:
+                    if (best_params[2] >= 0.5 or np.abs(best_params[0] - best_params[1]) <= 10) and not kwargs['skip_rerun']:
                         mstr, rstr = filename.split('/')[-2:]
                         f.write(f'{mstr}/{rstr}\n')
-
-            else:
-                # In these cases, the fit is best described by a single gaussian but only sigma_1 or sigma_2 then matters, not both
-                # So find out which and select it. These cases will regardless be re-ran as per the check above, but even for the re-run this may happen
-                if best_params[2] == 0.5 or np.abs(best_params[0] - best_params[1]) <= 10:
+                
+                # sigma1 or sigma2 goes very close to 1 but lambda doesnt go to 0, this should be a single gaussian though
+                if best_params[0] <= 5 or best_params[1] <= 5:
                     test_params = best_params.copy()
                     test_params[2] = 0.
-                    lambda_0_likelihood = ll_func_for_minimize(test_params)
+                    lambda_0_likelihood = ll_func_simplified(test_params)
 
                     test_params[2] = 1.
-                    lambda_1_likelihood = ll_func_for_minimize(test_params)
-
-                    if lambda_0_likelihood < lambda_1_likelihood:
-                        test_params[2] = 0.
-                    
+                    lambda_1_likelihood = ll_func_simplified(test_params)
+                    test_params[2] = 0
+                    if lambda_0_likelihood > lambda_1_likelihood:
+                       test_params[1], test_params[0] = test_params[0], test_params[1]
+                       best_likelihood = lambda_1_likelihood 
                     else:
-                       test_params[1], test_params[0] = test_params[0], test_params[1] #flip sigmas, EVEN IF that means sigma1 < sigma2 now since sigma1 is always the more important one
+                        best_likelihood = lambda_0_likelihood
 
                     best_params = test_params.copy()
 
+            else:
+                # either sigma1 ~ sigma2 but we did not allow that 
+                if np.abs(best_params[0] - best_params[1]) <= 10:
+                    test_params = best_params.copy()
+                    test_params[2] = 0.
+                    lambda_0_likelihood = ll_func_simplified(test_params)
 
-        # Perturb the best found parameter set for an error estimate
-        param_dict = perturb_around_likelihood(params = best_params, 
-                                               log_likelihood_func = lambda x: -1 *log_likelihood_func(x, data, loglambda, kwargs['single_gauss'], False), #for the error measure, we do not want to enforce sigma_1 > sigma_2, otherwise the error is just the difference between the values 
-                                               single_gauss = kwargs['single_gauss'])
- 
-        if kwargs['flip_sigmas']:
-            #Switch sigma_1 and sigma_2 (and errors) and flip lambda to 1 - lambda (thus switching the errors)
-            param_dict['sigma_1'], param_dict['sigma_2'] = param_dict['sigma_2'], param_dict['sigma_1']
-            param_dict['errors'][0], param_dict['errors'][1] = param_dict['errors'][1], param_dict['errors'][0]
-            param_dict['lambda'] = 1 - param_dict['lambda']
-            param_dict['errors'][2][0], param_dict['errors'][2][1] = param_dict['errors'][2][1], param_dict['errors'][2][0]
+                    test_params[2] = 1.
+                    lambda_1_likelihood = ll_func_simplified(test_params)
+                    test_params[2] = 0
+                    if lambda_0_likelihood > lambda_1_likelihood:
+                       test_params[1], test_params[0] = test_params[0], test_params[1]
+                       best_likelihood = lambda_1_likelihood 
+                    else:
+                        best_likelihood = lambda_0_likelihood
+
+                    best_params = test_params.copy()
+            
+            param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda'] = best_params[0], best_params[1], best_params[2]
+
+            if kwargs['flip_sigmas']:
+                #Switch sigma_1 and sigma_2 (and errors) and flip lambda to 1 - lambda (thus switching the errors)
+                param_dict['sigma_1'], param_dict['sigma_2'] = param_dict['sigma_2'], param_dict['sigma_1']
+                param_dict['errors'][0], param_dict['errors'][1] = param_dict['errors'][1], param_dict['errors'][0]
+                param_dict['lambda'] = 1 - param_dict['lambda']
+                param_dict['errors'][2][0], param_dict['errors'][2][1] = param_dict['errors'][2][1], param_dict['errors'][2][0]
 
 
         # Add some more diagnostics to the dictionaries for later use and ease
@@ -459,9 +532,9 @@ class ONEHALO_fitter:
                     plot_distribution_gaussian_mod(double_gaussian_loglambda, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
             else:
                 if not kwargs['single_gauss']: 
-                    plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
+                    plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.pdf', loglambda = False)
                 else: 
-                    plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
+                    plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.pdf', loglambda = False, single_gauss = True)
         
         if kwargs['timeit']: 
             duration = time() - now
@@ -473,8 +546,8 @@ class ONEHALO_fitter:
     def fit_to_catalogued_bin(self, rbin: np.array, datapath: str, **kwargs):
         #datapath should go to massbin folder with hdf5 files
         # always flip the sigmas in these specific bins
-        if f'r_{rbin[0]:.2f}-{rbin[1]:.2f}' in kwargs['flip_bins'] and self.lower_mass in [12.0, 12.5]:
-            kwargs['flip_sigmas'] = True
+        if f'M_{self.lower_mass:.1f}-{self.upper_mass:.1f}-r_{rbin[0]:.2f}-{rbin[1]:.2f}' in kwargs['flip_bins']:
+            kwargs['skip_rerun'] = True
         
         rpath = os.path.join(datapath, kwargs['r_unit'], f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
 
@@ -497,7 +570,6 @@ class ONEHALO_fitter:
         filename += f'/r_{rbin[0]:.2f}-{rbin[1]:.2f}'
 
         # keep everything variable except the enforcement of sigma_2 < sigma_1 in the likelihood
-        # likelihood_func = lambda x,y,z,w :double_gaussian_log_likelihood(x,y,z,w, enforce_sigma_2_smaller = self.enforce_sigma_2_smaller)
         likelihood_func = double_gaussian_log_likelihood
 
         output = self._fit_modified_gaussian_emcee(data = masked_data, initial_guess = self.initial_param_dict, log_likelihood_func = likelihood_func,
@@ -736,7 +808,8 @@ class ONEHALO_MADD_fitter:
             self.rel_vels = handle['rel_vels'][:]
             self.rel_dist = handle['rel_dist'][:]
         
-        self.min_half_v_sq_arr = -0.5 *np.square(self.rel_vels) 
+        # print(self.halo_masses, np.min(self.halo_masses), np.max(self.halo_masses))
+        self.min_half_v_sq_arr = -0.5 * np.square(self.rel_vels) 
 
         self.Ndata = self.rel_vels.shape[0] # Take the 0 of the shape since shape[1] = 3 (3 indep. velocity points per datum)
 
@@ -747,7 +820,7 @@ class ONEHALO_MADD_fitter:
 
     def get_double_gauss_parameters(self, split_params:list, function_combi:list, n_params_r:list,
                                     halo_masses: np.ndarray | None = None, rel_dist: np.ndarray | None = None,
-                                    upper_sigma_bound: float | None = None, flip_sigmas: bool = True) -> np.ndarray:
+                                    upper_sigma_bound: float | None = None, constrain_sigmas: bool = False) -> np.ndarray:
         
         """ From a given set of parameters (split by the split_parameter() function) and corresponding function combination, generate the 
             double gauss parameter values for each datapoint. Note that sigma_1 > sigma_2 is explicitly enforced by flipping the values if need be,
@@ -763,7 +836,7 @@ class ONEHALO_MADD_fitter:
             halo_masses (np.array or None, optional): Halo masses in the data. Defaults to None, i.e. the whole dataset is used.
             rel_dist (np.array or None, optional): Radial distances from the COM in the data. Defaults to None, i.e. the whole dataset is used.
             upper_sigma_bound(int or None, optional): Controls the cap for the sigma parameters, if None will set it to the value in GLOBAL_PRIOR_RANGE. Only used for initial conditions. Defaults to None.
-            flip_sigmas(bool, optional): Whether to flip the values of sigma_1 and sigma_2 if sigma_1 < sigma_2. Defaults to False.
+            constrain_sigmas(bool, optional): Whether to force sigma_1 > sigma_2. Defaults to False.
 
         Returns:
             np.ndarray: Shape (3, Ndata) array holding the parameter values for the double gauss model.
@@ -783,9 +856,22 @@ class ONEHALO_MADD_fitter:
             param_r_func, param_m_funcs = function_combi[i] 
 
             parameters_for_r_func = [param_m_funcs[k](halo_masses, *split_params[j]) for k,j in enumerate(range(r_pointers[i], r_pointers[i+1]))]
-
+            #IDEA: if i == 2 (lambda) and lambda is inverse we know 0 < a < ~1? and b < 1 ! clamp?
+            if i == 2:
+                try:
+                    halo_masses.shape[0]
+                    parameters_for_r_func = np.clip(parameters_for_r_func, np.array((0, -np.inf))[:, np.newaxis], np.array((1, 1))[:, np.newaxis])
+                except:
+                    parameters_for_r_func = np.clip(parameters_for_r_func, np.array((0, -np.inf)), np.array((1, 1)))
             param_values = param_r_func(rel_dist, *parameters_for_r_func) 
             double_gauss_params[i, :] = param_values
+
+        ## Clamping
+
+        # Trying to clamp lambda in a more smart way, does not work
+        # low_dist_mask = rel_dist < 0.25
+        lambda_upper_bound = np.full(double_gauss_params.shape[1], 1)
+        # lambda_upper_bound[low_dist_mask] = 1.
 
         if upper_sigma_bound is None: # during fitting
             upper_sigma_bound = GLOBAL_PRIOR_RANGE[0][1]
@@ -793,33 +879,25 @@ class ONEHALO_MADD_fitter:
         else: # i.e. upper_sigma_bound got a value which only happens during initial conditions finding
             sigma_2_min = 50.
 
-
         lower_bounds = np.array([GLOBAL_PRIOR_RANGE[0][0], sigma_2_min, GLOBAL_PRIOR_RANGE[2][0]])[:, np.newaxis]
 
-        if flip_sigmas: 
-            sigma_flip_mask = double_gauss_params[0] < double_gauss_params[1] # sigma_1 < sigma_2
-            upper_bounds = np.array([upper_sigma_bound, upper_sigma_bound, 0.5])[:, np.newaxis]
-
-        else: 
-            if upper_sigma_bound is not None: # during initial condition finding
-                upper_bounds = [np.repeat(upper_sigma_bound, double_gauss_params.shape[1]),
-                                np.clip(double_gauss_params[0,:] - 5., 50., None), #clamp sigma_2 upper_bound (i.e. the corresponding value of sigma_1 - 5) to a minimum of 50
-                                np.repeat(GLOBAL_PRIOR_RANGE[2][1], double_gauss_params.shape[1])] 
+        if constrain_sigmas: 
+            upper_bounds = [np.repeat(upper_sigma_bound, double_gauss_params.shape[1]),
+                            np.maximum(double_gauss_params[0,:] - 5., 50.), #clamp sigma_2 upper_bound (i.e. the corresponding value of sigma_1 - 5) to a minimum of 50
+                            lambda_upper_bound] 
             
-            else: # during fitting we let it loose
-                upper_bounds = np.array([upper_sigma_bound, upper_sigma_bound, 0.5])[:, np.newaxis]
+        else:
+            upper_bounds = np.array([np.repeat(upper_sigma_bound, double_gauss_params.shape[1]),
+                                    np.repeat(GLOBAL_PRIOR_RANGE[1][1], double_gauss_params.shape[1]),
+                                    lambda_upper_bound])
 
         # clamp values accordingly
         double_gauss_params = np.clip(double_gauss_params, lower_bounds, upper_bounds)
 
-        if flip_sigmas: 
-            double_gauss_params[0][sigma_flip_mask], double_gauss_params[1][sigma_flip_mask] = double_gauss_params[1][sigma_flip_mask], double_gauss_params[0][sigma_flip_mask] 
-            double_gauss_params[2][sigma_flip_mask] = 1 - double_gauss_params[2][sigma_flip_mask]
-
         return double_gauss_params
     
     def get_MADD_likelihood(self, params, n_params_m, n_params_r, function_combi,
-                             upper_sigma_bound: int | None = None, flip_sigmas: bool = False) -> np.float64:
+                             upper_sigma_bound: int | None = None, constrain_sigmas: bool = False) -> np.float64:
         """ Given parameters, parameter info (as per the param_info() function) and a function combination, calculate the likelihood of the data.
 
         Args:
@@ -828,7 +906,6 @@ class ONEHALO_MADD_fitter:
             n_params_r (list): integers specifying the amount of parameters for the parameterization of a double-gauss parameter as a function of r. As generated by split_parameters()
             function_combi (list): list of function instances to be passed to the likelihood function. Should be as generated in functional_forms.py.
             upper_sigma_bound(int or None, optional): Controls the cap for the sigma parameters, if None will set it to the value in GLOBAL_PRIOR_RANGE. Only used for initial conditions. Defaults to None.
-            flip_sigmas(bool, optional): Whether to flip the values of sigma_1 and sigma_2 if sigma_1 < sigma_2. Defaults to False.
 
         Returns:
             float: The negative log-likelihood of the data with the given parameters and function combination.
@@ -836,7 +913,7 @@ class ONEHALO_MADD_fitter:
         split_params = self.split_parameters(params, n_params_m)
         
         # Update DG parameters from parameter set
-        DG_params = self.get_double_gauss_parameters(split_params, function_combi, n_params_r, upper_sigma_bound = upper_sigma_bound, flip_sigmas = flip_sigmas)
+        DG_params = self.get_double_gauss_parameters(split_params, function_combi, n_params_r, upper_sigma_bound = upper_sigma_bound, constrain_sigmas = constrain_sigmas)
 
         minlogL = double_gaussian_log_likelihood_vec(DG_params, self.min_half_v_sq_arr)
 
@@ -846,7 +923,9 @@ class ONEHALO_MADD_fitter:
                                     nwalkers: int = 50, nsteps: int = 1000,
                                     n_params_r: list | None = None, n_params_m: list | None = None, ndim: int | None = None,
                                     filepath: str = '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/MADD_subsample',
-                                    init_condition_method: str = 'Nelder-Mead',
+                                    init_condition_method: str = 'Nelder-Mead', 
+                                    functional_form: str = '',
+                                    overwrite: bool = False,
                                     **kwargs) -> None:
         """ Perform Markov-Chain Monte-Carlo procedure on a function combination, finding the optimum parameters that fit the data best.
 
@@ -861,9 +940,12 @@ class ONEHALO_MADD_fitter:
             ndim (int | None, optional): Total number of parameters for the given function combination. Defaults to None, i.e. calculated from scratch.
             filepath (str, optional): Path specifying the directory in which the results may be stored. Defaults to '/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/MADD_subsample'.
             init_condition_method (str, optional):  Name of the method used to find the initial conditions. This should be pre-ran via ONEHALO_initial_conditions.py! Defaults to 'Nelder-Mead'.
-
+            overwrite (bool, optional): Whether to overwrite existing fits. Defaults to False.
         """
-        # if used like this, make it subsample_results-METHOD
+
+        if os.path.isfile(os.path.join(filepath, f'function_combi_{combi_number}.json')) and not overwrite:
+            return
+
         if 'subsample_results' in init_condition_method:
             # Extract the initial conditions method from the input and read in the results from the subsampled data fit as initial conditions
             init_condition_method = init_condition_method.split('-')[-1]
@@ -876,13 +958,18 @@ class ONEHALO_MADD_fitter:
             _, MCMC_scales = np.load(os.path.join('/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions', init_condition_method, f'function_combi_{combi_number}.npy'))
 
         else:
-            self.init_condition_path = f'/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions/{init_condition_method}'
+            if functional_form != '':
+                functional_form = functional_form if functional_form.startswith('_') else '_' + functional_form
+            else:
+                functional_form = functional_form
+            self.init_condition_path = f'/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions/{init_condition_method}{functional_form}'
             initial_params, MCMC_scales = np.load(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.npy'))
-
 
         if any([n_params_m is None, n_params_r is None, ndim is None]):
            n_params_r, n_params_m, ndim = param_info(function_combi)
         
+        init_likelihood = self.get_MADD_likelihood(initial_params, n_params_m, n_params_r, function_combi)
+
         MCMC_scales =  MCMC_scales[:, np.newaxis]
         noise = np.random.normal(0, MCMC_scales, size = (MCMC_scales.size, nwalkers))
 
@@ -911,15 +998,17 @@ class ONEHALO_MADD_fitter:
         best_params = minimize(ll_func_for_minimize, x0 = best_params).x
         best_likelihood = ll_func_for_minimize(best_params)
 
-        with open('/disks/cosmodm/vdvuurst/logs/log.txt', 'a') as f:
-            f.write(f'MCMC likelihood: {likelihoods[best_arg]} and after minimize: {best_likelihood}\n')
+        with open('/disks/cosmodm/vdvuurst/logs/MADD_log.txt', 'a') as f:        
+            f.write(f'Initial likelihood: {init_likelihood}, '
+                    +f'MCMC likelihood: {likelihoods[best_arg]} and after minimize: {best_likelihood}\n')
 
-        BIC_score = BIC(-1*best_likelihood, self.Ndata, ndim) # -1 because BIC takes into account logL not minlogL
+        BIC_score = BIC(best_likelihood, self.Ndata, ndim, minlogL=True) # minlogL set to True to not flip around too much with minus signs
 
         param_dict = {'parameters':list(best_params), 'likelihood':float(best_likelihood),
                        'BIC': float(BIC_score), 'functional_form':[list(f) for f in function_combi_names], # need to cast to list for json serialization
                        'nwalkers': nwalkers, 'nsteps': nsteps, 'initial_condition_method':init_condition_method}
 
+        mkdir_if_non_existent(filepath)
         with open(os.path.join(filepath, f'function_combi_{combi_number}.json'), 'w') as f:
             dump(param_dict, f, indent = 1)
 
@@ -998,9 +1087,6 @@ class ONEHALO_MADD_fitter:
 
         norm = 1 / ((one_min_lambda * DG_params[0]) + (DG_params[2] * DG_params[1])) * SQRT2PI_FAC
 
-        # ax.plot(vel_data_in_bin, hist_area*double_gaussian_vec_for_plot(min_half_v_sq_in_bin, sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda),
-        #         '-', label = f"Double Gaussian (MADD)\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}",
-        #         color='red')
         DAT = np.linspace(np.min(vel_data_in_bin),np.max(vel_data_in_bin), min_half_v_sq_in_bin.size).reshape(min_half_v_sq_in_bin.shape)
 
         plot_data =  hist_area * double_gaussian_vec_for_plot(-0.5*np.square(DAT), sigma_1_sq, sigma_2_sq, DG_params[2], one_min_lambda, norm)

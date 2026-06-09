@@ -7,6 +7,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from scipy.stats import skew, kurtosis
 from supplementary.subsample import *
+from MCMC import MCMC
+from functions import *
+from inspect import signature
+from json import dump, load
 
 def _make_mass_mask(mass: np.ndarray, m_min: np.float32, m_max: np.float32) -> np.ndarray:
     return (10**m_min <= mass) & (mass <= 10**m_max) # base 10 since FOF masses aren't in units of 10^10 Msol
@@ -296,6 +300,191 @@ class TWOHALO:
             plt.show()
         
         plt.close()
+
+
+class TWOHALO_fitter:
+    def __init__(self, PATH = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_13.0-13.5_M2_13.5-14.0.hdf5'):
+        self.massbin = PATH.split('velocity_data_')[-1].split('.hdf5')[0]
+
+        with h5py.File(PATH,'r') as file:
+            self.radial_distances = file['radial_distances'][:]
+            self.velocities = file['velocity_differences'][:]
+            self.prim_masses = file['primary_masses'][:]
+            self.sec_masses = file['secondary_masses'][:]
+        
+        print('DATA LOADED')
+
+        self.max_radius = 300. #Mpc
+        self.number_of_bins = 20 #hardcoded, should make input
+
+        self.radial_bins = np.logspace(0, np.log10(self.max_radius), self.number_of_bins)
+        self.bin_indices = np.digitize(self.radial_distances, bins = self.radial_bins) - 1
+
+
+    def run_two_halo_emcee(self, bin_idx, likelihood_func = skew_gaussian_log_likelihood, func = skewnorm_func, nwalkers = 20, nsteps = 500):
+        bin_mask = self.bin_indices == bin_idx
+        bin_velocities = self.velocities[bin_mask]
+
+        ndim = len(signature(func).parameters) - 1
+
+        if func is skewnorm_func:
+            pos = np.random.uniform(low = [-2.,-250., 100.,], high = [2., 0., 2000.], size = (nwalkers, ndim)).T
+            step_sizes = np.array([0.05, 2.5, 100.])[:, np.newaxis]
+
+        elif func is skew_t_pdf:
+            pos = np.random.uniform(low = [-5., -400, 150, 2.], high = [0, 400, 350, 8], size = (nwalkers, ndim)).T
+            step_sizes = np.array([0.25, 25., 5., 0.1])[:, np.newaxis]
+            
+        sampler = MCMC(nwalkers, likelihood_func , args = (bin_velocities,), step_sizes= step_sizes)
+        sampler.run_mcmc(pos, nsteps, verbose = False)
+
+        best_params, best_likelihood, title = self.refine_and_plots_twohalo(bin_velocities, bin_idx, sampler, ndim, func, likelihood_func)
+
+        datapath = f'/disks/cosmodm/vdvuurst/data/TwoHalo_param_fits/{title}/'
+        
+        mkdir_if_non_existent(datapath)
+        param_dict = {'parameters':list(best_params), 'likelihood':float(best_likelihood), 'nsteps':nsteps, 'nwalkers':nwalkers, 'function':title}
+        with open(os.path.join(datapath, f'{self.massbin}-rbin{bin_idx}.json'), 'w') as f:
+            dump(param_dict, f, indent = 1)
+        
+        # plot both distributions together if possible
+        try:
+            self.plot_dist_from_result(os.path.join(datapath, f'{self.massbin}-rbin{bin_idx}.json'), bin_idx)
+        except FileNotFoundError as e:
+            print(f'Could not plot both distributions because of the following error:\n{e}')
+
+    def refine_and_plots_twohalo(self, bin_velocities, bin_idx, sampler, ndim, func = skewnorm_func, ll_func = skew_gaussian_log_likelihood):
+        title = 'Skew-normal' if func is skewnorm_func else 'Skew-t'
+        fig, axes = plt.subplots(ndim + 1, figsize=(12, 10), sharex=True)
+        axes[0].set_title(title)
+        samples = sampler.get_chain()
+
+        burnin = 0
+        if func is skewnorm_func:
+            param_labels = [r'$\alpha$',r'$\mu$', r'$\sigma$']
+        else:
+            param_labels = [r'$\alpha$', r'$\xi$', r'$\omega$', r'$\nu$']
+        for i in range(ndim):
+            ax:plt.Axes = axes[i]
+            ax.plot(samples[i,...].T, alpha=0.3)
+            ax.set_xlim(0, samples.shape[-1])
+            ax.set_ylabel(param_labels[i])
+            ax.yaxis.set_label_coords(-0.1, 0.5)
+
+            ymin, ymax = ax.get_ylim()
+            ax.vlines(burnin, ymin, ymax, colors = 'black', linestyles = '--')
+            ax.set_ylim(ymin, ymax)
+
+        likelihoods = sampler.get_likelihoods()
+        likelihoods_plot = np.log10(likelihoods).T
+        likelihoods_plot[:burnin] = np.nan # so that the lines are better discernable in the plot
+        
+        axes[-1].plot(likelihoods_plot, alpha = 0.3)
+        axes[-1].set(ylabel = r'$\log\left(-\log(\mathcal{L})\right)$')
+        axes[-1].set_xlabel("Step number")
+        ymin, ymax = axes[-1].get_ylim()
+        axes[-1].vlines(burnin, ymin, ymax, colors = 'black', linestyles = '--')
+        axes[-1].set_ylim(ymin, ymax)
+        fig.tight_layout()
+        # subpath = f/TWOHALO/{title}/'
+        plt.savefig(os.path.join('/disks/cosmodm/vdvuurst/figures/TWOHALO', title, f'{self.massbin}-rbin{bin_idx}_walkers.png'), dpi = 300)
+        plt.close()
+
+        # Refining
+        best_arg = np.unravel_index(np.argmin(likelihoods), likelihoods.shape)
+        best_params = np.array([samples[i,*best_arg] for i in range(ndim)])
+        # print('Performing BFGS refinement')
+        best_params = minimize(ll_func, best_params, args = (bin_velocities)).x
+        best_likelihood = ll_func(best_params, bin_velocities)
+
+        bin_mask = self.bin_indices == bin_idx
+        bin_velocities = self.velocities[bin_mask]
+
+        plt.figure()
+        plt.title(f'{self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc ({title})')
+
+        bins = rice_bins(bin_velocities.size)
+
+        bin_heights, bin_edges = np.histogram(bin_velocities, bins=bins, density=False)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        bin_width= bin_edges[1] - bin_edges[0] 
+        bin_widths = np.diff(bin_edges)  # The width of each bin
+        number_density = bin_heights / bin_widths  # Normalize by bin width
+
+        plt.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black',
+                alpha=0.75, color='b', label = "N" + r'$_\mathrm{b}$' + f" = {rice_bins(bin_velocities.size)}")
+
+        DAT=np.linspace(np.min(bin_velocities),np.max(bin_velocities),1000)
+        hist_area=np.sum(bin_heights)
+        plt.plot(DAT, hist_area * func(DAT, *best_params), c='black')
+        plt.legend()
+
+        plt.xlabel(r'Two-halo velocity $v$ [km/s]')
+        plt.ylabel('Density')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join('/disks/cosmodm/vdvuurst/figures/TWOHALO', title, f'{self.massbin}-rbin{bin_idx}_fit.png'), dpi = 300)
+        plt.close()
+
+        return best_params, best_likelihood, title
+
+
+    def plot_dist_from_result(self, param_dict_path, bin_idx):
+        if 'Skew-t' in param_dict_path:
+            with open(param_dict_path, 'r') as f:
+                param_dict_skew_t = load(f)
+            
+            param_dict_path = param_dict_path.replace('Skew-t', 'Skew-normal')
+            with open(param_dict_path, 'r') as f:
+                param_dict_skew_norm = load(f)
+        else:
+            with open(param_dict_path, 'r') as f:
+                param_dict_skew_norm = load(f)
+            
+            param_dict_path = param_dict_path.replace('Skew-normal', 'Skew-t')
+            with open(param_dict_path, 'r') as f:
+                param_dict_skew_t = load(f)
+
+        best_params_skew_t = np.asarray(param_dict_skew_t['parameters'])
+        best_params_skew_norm = np.asarray(param_dict_skew_norm['parameters'])
+
+        bin_mask = self.bin_indices == bin_idx
+        bin_velocities = self.velocities[bin_mask]
+
+        plt.figure()
+        splitstring = self.massbin.split('_')
+        firsthalf = splitstring[0].replace('M1',r'$M_{\mathrm{2h,p}}$') + ' = ' + splitstring[1] + ' dex'
+        sechalf = splitstring[2].replace('M2','$M_{\mathrm{2h,s}}$') + ' = ' + splitstring[3] + ' dex'
+        plt.title(f'{firsthalf}, {sechalf}' + '\n' + r'$r_{\mathrm{2h}}$'+ f' = {self.radial_bins[bin_idx]:.2f} - {self.radial_bins[bin_idx + 1]:.2f} Mpc')
+
+        bins = rice_bins(bin_velocities.size)
+
+        bin_heights, bin_edges = np.histogram(bin_velocities, bins=bins, density=False)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        bin_width= bin_edges[1] - bin_edges[0] 
+        bin_widths = np.diff(bin_edges)  # The width of each bin
+        number_density = bin_heights / bin_widths  # Normalize by bin width
+
+        plt.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black',
+                alpha=1, color='b', label = "N" + r'$_\mathrm{b}$' + f" = {rice_bins(bin_velocities.size)}")
+
+        DAT=np.linspace(np.min(bin_velocities),np.max(bin_velocities),1000)
+        hist_area=np.sum(bin_heights)
+
+        plt.plot(DAT, hist_area * skewnorm_func(DAT, *best_params_skew_norm), c='red', label = r'Skew normal-distribution', lw = 2)
+        plt.plot(DAT, hist_area * skew_t_pdf(DAT, *best_params_skew_t), c='forestgreen', label = r'Skew $t$-distribution', lw = 2)
+        plt.legend()
+
+        plt.xlabel(r'Two-halo velocity $v_{\mathrm{2h}}$ [km/s]')
+        plt.ylabel('Density')
+
+        plt.tight_layout()
+        mkdir_if_non_existent('/disks/cosmodm/vdvuurst/figures/TWOHALO/Combined')
+        plt.savefig(os.path.join('/disks/cosmodm/vdvuurst/figures/TWOHALO/Combined',
+                                  f'{self.massbin}-rbin{bin_idx}_fit.png'), dpi = 300)
+        plt.close()
+
+
 
 
 def parse_args():

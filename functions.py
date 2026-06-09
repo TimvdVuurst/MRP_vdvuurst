@@ -4,10 +4,13 @@ from scipy.optimize import minimize, brentq
 from scipy.differentiate import derivative
 from typing import Callable
 import os
+from scipy.stats import skewnorm, t
+from scipy.special import gamma
 
 # sigma_1, sigma_2, lambda
-GLOBAL_PRIOR_RANGE = [[1., 2000.], [1., 2000.], [0., 1.]]
-SQRT2PI_FAC = 1 / np.sqrt(2 * np.pi)
+GLOBAL_PRIOR_RANGE = [[1., 2500.], [1., 2500.], [0., 1.]]
+SQRT2PI = np.sqrt(2 * np.pi)
+SQRT2PI_FAC = 1 / SQRT2PI
 
 ## FUNCTIONS FOR ONEHALO LIKELIHOODS
 
@@ -47,7 +50,7 @@ def log_prior(theta, enforce_sigma_2_smaller: bool = False):
         if enforce_sigma_2_smaller:
             sigma_2_prior = sigma_2_prior * (sigma_2 < (sigma_1 - 5.))
     
-    lambda_prior = GLOBAL_PRIOR_RANGE[2][0] <= lambda_ <= GLOBAL_PRIOR_RANGE[2][1] #GLOBAL was set to 1 for the joint model, should be 0.5 here
+    lambda_prior = GLOBAL_PRIOR_RANGE[2][0] <= lambda_ <= GLOBAL_PRIOR_RANGE[2][1] 
 
     if sigma_1_prior and sigma_2_prior and lambda_prior:
         return 0.0
@@ -148,7 +151,9 @@ def log_prior_vec(theta: list | tuple | np.ndarray):
         return np.float32(prior)
     return prior
 
-def double_gaussian_vec(min_half_v_sq: float | np.ndarray, sigma1_sq: float | np.ndarray, sigma2_sq: float | np.ndarray, lambda_: float | np.ndarray, one_min_lambda: float | np.ndarray):  
+def double_gaussian_vec(min_half_v_sq: float | np.ndarray, sigma1_sq_inv: float | np.ndarray,
+                        sigma2_sq_inv: float | np.ndarray, lambda_: float | np.ndarray,
+                        one_min_lambda: float | np.ndarray):  
     """ Given pre-calculated operations on the three double gaussian parameters and velocity, vectorized. I.e. this means that all input can be either scalars or np.ndarrays of the same size.
 
     Args:
@@ -162,11 +167,15 @@ def double_gaussian_vec(min_half_v_sq: float | np.ndarray, sigma1_sq: float | np
         float: The value of the modified gaussian summed over the parameter values. Only usuable for likelihood therefore.
     """
     #for SQUARED velocity input!!, vectorized over large arrays of sigma1, sigma2 and lambda with operations pre-calced
-    # normalization done to break degeneracy between lambda_ and sigma_i as much as possible
-    p = 0
-    for i in range(3): # loop over all vx, then vy then vz. We do it like this to reconcile the shape difference (Ngal = shape(Vi))
-        p += np.sum(np.log((one_min_lambda * np.exp(min_half_v_sq[:,i] / sigma1_sq) + #TODO: pre-calculate inverses to reduce operations further 
-                             lambda_ * np.exp(min_half_v_sq[:,i] / sigma2_sq)))) # take the log so we can sum
+
+    # p = 0
+    # for i in range(3): # loop over all vx, then vy then vz. We do it like this to reconcile the shape difference (Ngal = shape(Vi))
+    #     p += np.sum(np.log((one_min_lambda * np.exp(min_half_v_sq[:,i] * sigma1_sq_inv) + #TODO: pre-calculate inverses to reduce operations further 
+    #                          lambda_ * np.exp(min_half_v_sq[:,i] * sigma2_sq_inv)))) # take the log so we can sum
+        
+    p = np.sum(one_min_lambda[:, np.newaxis] * np.exp(min_half_v_sq * sigma1_sq_inv[:, np.newaxis]) +  
+                             lambda_[:, np.newaxis] * np.exp(min_half_v_sq * sigma2_sq_inv[:, np.newaxis]))
+
     return p 
 
 def double_gaussian_vec_for_plot(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda, norm): 
@@ -183,43 +192,74 @@ def log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_
         I.e. this means that all input can be either scalars or np.ndarrays of the same size.
 
     Args:
-        min_half_v_sq (float | np.ndarray): Velocity data scaled accordingly, i.e. as -0.5 v^2.. Expected to have shape (3, N).
-        sigma1_sq (float | np.ndarray): sigma_1^2. Expected to have shape (N,)
-        sigma2_sq (float | np.ndarray): sigma_2^2. Expected to have shape (N,)
+        min_half_v_sq (float | np.ndarray): Velocity data scaled accordingly, i.e. as -0.5 v^2.. Expected to have shape (N, 3).
+        sigma1_sq (float | np.ndarray): 0.5* sigma_1^2. Expected to have shape (N,)
+        sigma2_sq (float | np.ndarray): 0.5 * sigma_2^2. Expected to have shape (N,)
         lambda_ (float | np.ndarray): Lambda parameters. Expected to have shape (N,)
         one_min_lambda (float | np.ndarray): 1 - lambda. Expected to have shape (N,)
 
     Returns:
         float: The log-value of the modified gaussian summed over the parameter values. Only usuable for likelihood therefore.
     """
-    
-    min_half_v_sq_sigma_1 = min_half_v_sq * sigma1_sq_inv[:, np.newaxis]
+
+    v_nonzero_mask = min_half_v_sq != 0 #these points all contribute 0 to log(f(v))
+    min_half_v_sq_sigma_1 = min_half_v_sq * sigma1_sq_inv[:, np.newaxis] 
     min_half_v_sq_sigma_2 = min_half_v_sq * sigma2_sq_inv[:, np.newaxis]
 
-    return np.sum(min_half_v_sq_sigma_1 + np.log(one_min_lambda[:, np.newaxis] + lambda_[:, np.newaxis] * np.exp(min_half_v_sq_sigma_2 - min_half_v_sq_sigma_1)))
+    # fringe cases of lambda can yield overflows where they are not necessary
+    lambda_zero_mask = (lambda_ == 0)
+    lambda_one_mask = (lambda_ == 1)
+    others_mask = np.invert(np.logical_or(lambda_zero_mask, lambda_one_mask)) #lambda neither 0 nor 1
+    v_nonzero_and_others_mask = v_nonzero_mask * others_mask[:, np.newaxis]
 
-def double_gaussian_log_likelihood_vec(params: np.ndarray, min_half_v_sq: np.ndarray, single_gauss: bool = False) -> np.float64:
+    min_half_v_sq_sigma_1_selection = min_half_v_sq_sigma_1[v_nonzero_and_others_mask]
+    min_half_v_sq_sigma_2_selection = min_half_v_sq_sigma_2[v_nonzero_and_others_mask]
+
+    # lambda 0 or 1 reduces the equation seen in others_contribution greatly
+    lambda_zero_contribution = np.sum(min_half_v_sq_sigma_1[lambda_zero_mask])
+    lambda_one_contribution = np.sum(min_half_v_sq_sigma_2[lambda_one_mask])
+    
+    reshaped_one_min_lambda = np.repeat(one_min_lambda, 3).reshape(one_min_lambda.size, 3)[v_nonzero_and_others_mask]
+    reshaped_lambda = np.repeat(lambda_, 3).reshape(lambda_.size, 3)[v_nonzero_and_others_mask]
+
+    others_contribution =  np.sum(min_half_v_sq_sigma_1_selection +
+                                   np.log(reshaped_one_min_lambda + reshaped_lambda * np.exp(min_half_v_sq_sigma_2_selection -
+                                                                                              min_half_v_sq_sigma_1_selection)))
+    
+    if not np.isfinite(others_contribution):
+            others_contribution =  np.sum(min_half_v_sq_sigma_2_selection +
+                                    np.log(reshaped_lambda + reshaped_one_min_lambda * np.exp(min_half_v_sq_sigma_1_selection -
+                                                                                               min_half_v_sq_sigma_2_selection)))
+
+    if not np.isfinite(others_contribution):
+        others_contribution =  np.sum(np.log(reshaped_lambda * np.exp(min_half_v_sq_sigma_2_selection) +
+                                              reshaped_one_min_lambda * np.exp(min_half_v_sq_sigma_1_selection)))
+
+    return lambda_zero_contribution + lambda_one_contribution + others_contribution
+
+def double_gaussian_log_likelihood_vec(params: np.ndarray, min_half_v_sq: np.ndarray) -> np.float64:
     """ Calculates the negative log-likelihood of the double gaussian model. Uses the log_double_gaussian_vec for this.
 
     Args:
         params (np.ndarray): Arrays holding values for sigma1, sigma2, lambda_ in that order.
-        min_half_v_sq (np.ndarray): Velocity data scaled accordingly, i.e. as -0.5 v^2. Expected to have shape (3, N).
+        min_half_v_sq (np.ndarray): Velocity data scaled accordingly, i.e. as -0.5 v^2. Expected to have shape (N, 3).
         single_gauss (bool, optional): Sets the lambda parameters to 0 always thus mimicking a single gaussian with similar likelihood scores. Defaults to False.
 
     Returns:
         np.float64: the negative log-likelihood of the double gaussian model. Uses the log_double_gaussian_vec for this.
     """
     sigma1, sigma2, lambda_ = params
-
-    one_min_lambda = 1 - lambda_
-    norm = 1 / (((one_min_lambda) * sigma1 + lambda_ * sigma2)) * SQRT2PI_FAC 
-    sigma1_sq_inv = 1 / (2 * sigma1**2)
-    sigma2_sq_inv = 1 / (2 * sigma2**2)
-
-    mu = log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
-    L = mu + np.sum(np.log(norm))
     
-    return -1*L
+    one_min_lambda = 1 - lambda_
+    norm = (one_min_lambda * sigma1 + lambda_ * sigma2) * SQRT2PI 
+    sigma1_sq_inv = 1 / (sigma1**2)
+    sigma2_sq_inv = 1 / (sigma2**2)
+
+    log_mu = log_double_gaussian_vec(min_half_v_sq, sigma1_sq_inv, sigma2_sq_inv, lambda_, one_min_lambda)
+
+    L = log_mu -( 3 * np.sum(np.log(norm))) #-log(norm) = log(1/norm) ! 
+
+    return -1*L - 1
 
 
 # GOODNESS OF FIT STATISTICS (OUTDATED)
@@ -482,11 +522,14 @@ def modified_logspace(start, stop, num, base = 10):
 
     return res
 
-def BIC(logL, n, k = 3):
-    #logL, note this is not minlogL!
+def BIC(logL, n, k = 3, minlogL: bool = True):
+    #logL, note this is not minlogL unless specified!
     #n : no. data points
     #k: no. parameters
-    return (k * np.log(n)) - 2 * logL
+    if not minlogL:
+        return (k * np.log(n)) - 2 * logL
+    else:
+        return (k* np.log(n)) + 2 * logL
 
 def mkdir_if_non_existent(path):
     if not os.path.isdir(path):
@@ -509,3 +552,58 @@ def extract_mass_and_rad_from_filename(fname):
     rlow, rhigh = np.array(rad_string.split('-'), dtype = np.float32)
 
     return mlow, mhigh, rlow, rhigh
+
+
+
+## TWOHALO functions
+
+# skewnorm functions
+def skewnorm_func(x,a,mu,sigma):
+    return skewnorm.pdf(x, a, loc = mu, scale = sigma)
+
+def log_prior(theta):
+    # print(theta)
+    a, mu, sigma = theta
+    if -4. <= a <= 4. and  -500. <= mu <= 50. and 1. <= sigma <= 2500.:
+        return 0.0
+    
+    return np.inf
+
+def skew_gaussian_log_likelihood(params, data): #full with prior
+    prior = log_prior
+    lp = prior(params)
+    if not np.isfinite(lp):
+        return np.inf
+
+    mu_func = skewnorm_func
+    mu_i = mu_func(data, *params)
+    # print(np.isfinite(np.log(mu_i)).sum(), mu_i.size)
+    # mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise
+    return -1 *np.sum(np.log(mu_i)) + 1. 
+
+### Skew-t functions
+
+def skew_t_pdf(x, alpha, xi, omega, nu):
+    return 2/omega * t.pdf((x-xi)/omega, nu) * t.cdf(alpha * (x-xi)/omega * np.sqrt((nu+1) / (nu + ((x-xi)/omega)**2)), nu+1)
+
+def log_prior_skew_t(theta):
+    alpha, xi, omega, nu = theta
+
+    if -5. <= alpha <= 1. and -500. <= xi <= 500. and 0 <= omega <= 500 and 2. <= nu <= 8.:
+        return 0.0
+    
+    return np.inf
+
+def skew_t_log_likelihood(params, data): #full with prior
+    prior = log_prior_skew_t
+    lp = prior(params)
+    # print(lp)
+    if not np.isfinite(lp):
+        return np.inf
+
+    mu_i = skew_t_pdf(data, *params)
+    # print(mu_i)
+    # print(np.log(mu_i))
+    # print()
+    mu_i[mu_i < 0] = 0. # cast negative values to 0, raises errors otherwise TODO: figure out why bc not allowed to do this
+    return -1 * np.sum(np.log(mu_i)) + 1. 

@@ -18,17 +18,17 @@ def format_plot():
     BIGGER_SIZE = 14 * 2
 
     plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
-    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
+    plt.rc('axes', labelsize=BIGGER_SIZE)                    # fontsize of the x and y labels\n",
     plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
+    plt.rc('legend', fontsize=MEDIUM_SIZE)                    # legend fontsize\n",
     mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
     mpl.rcParams['ytick.direction'] = 'in'
     mpl.rcParams['xtick.direction'] = 'in'
     mpl.rcParams['mathtext.fontset'] = 'cm'
     mpl.rcParams['font.family'] = 'STIXgeneral'
 
-    mpl.rcParams['figure.dpi'] = 100
+    mpl.rcParams['figure.dpi'] = 300
 
     mpl.rcParams['xtick.minor.visible'] = True
     mpl.rcParams['ytick.minor.visible'] = True
@@ -52,8 +52,8 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
     # Set plot appeareance
     fig = plt.figure(figsize=(7,7))
     frame=fig.add_subplot(1,1,1)
-    frame.set_xlabel('Velocity difference v', fontsize=16)
-    frame.set_ylabel('Number of galaxies per v', fontsize=16)
+    frame.set_xlabel('One-halo velocity $v_j$ [km/s]', fontsize=16)
+    frame.set_ylabel('Density', fontsize=16)
     frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
 
     if loglambda:
@@ -62,9 +62,6 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
             print(f'{4*weighted_sigma = }')
     else:
         weighted_sigma = np.average([sigma1, sigma2], weights = [1- lambda_, lambda_])
-
-    # range_mask = (data >= -4 * weighted_sigma) & (data <= 4 * weighted_sigma)
-    # data = data[range_mask]
 
     bin_heights, bin_edges = np.histogram(data, bins=bins, density=False)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -81,6 +78,7 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
     sig_digits = 4
     if not single_gauss:
         for i,param in enumerate(['sigma_1', 'sigma_2', 'lambda']):
+            unit = 'km/s' if i != 2 else ''
             if i == 2 and loglambda:
                 param_latex = 'log' + param
                 sig_digits = 3
@@ -88,7 +86,7 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
                 param_latex = param
 
             paramstr += latex_formatter[param_latex] +\
-                  f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
+                  f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$ {unit}\n'
     
     else:
         distname = 'Single Gaussian'
@@ -97,18 +95,10 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
         paramstr += latex_formatter[param_latex] +\
               f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
 
-    # Calculating G-statistic for goodness of fit estimate
-    # integral_func = mod_gaussian_integral if not loglambda else mod_gaussian_integral_loglambda
-    # Qval = get_Qvalue(param_dict, bin_heights, bin_edges, integral_func = integral_func, sanitycheck = False)
-    # Gval = get_Gstat(param_dict, bin_heights, bin_edges, integral_func = integral_func)
-
-    #Update textbox w/ G statistic and plot
-    # paramstr += f'Q = {Qval:.3}'
-    # paramstr += f'G = {Gval:.1f}'
     if not single_gauss:
-        frame.text(0.155, 0.71, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
-    else:
         frame.text(0.155, 0.78, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
+    else:
+        frame.text(0.155, 0.82, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
 
     hist_area=np.sum(bin_heights)
     frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}", color='red')
@@ -117,6 +107,7 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
 
     frame.set_xlim(-4 * weighted_sigma, 4 * weighted_sigma)
     
+    fig.tight_layout()
     if not show:
         fig.savefig(filename, dpi=200)
         plt.close()
