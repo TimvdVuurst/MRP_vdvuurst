@@ -1,8 +1,4 @@
-import os
 import numpy as np
-import h5py 
-from tqdm import tqdm
-
 
 def subsample_function(r, dropoff: callable, rmin = 20.13, rmax = 300):
     if isinstance(r,float):

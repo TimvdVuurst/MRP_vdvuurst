@@ -130,7 +130,7 @@ def _create_iterable_input(**kwargs):
 
         #create fitter objects to use. Only need it to load in data if we use 
         # non-catalogued data (i.e. we need to calculate the radial bin masks within the function)
-        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'], load = not catalogued, enforce_sigma_2_smaller = True)
+        fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = kwargs['loglambda'], load = not catalogued, enforce_sigma_2_smaller = False)
 
         fitters.append(fitter)
 
@@ -193,7 +193,7 @@ if multiprocess:
 
             #create fitter objects to use. Only need it to load in data if we use 
             # non-catalogued data (i.e. we need to calculate the radial bin masks within the function)
-            fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = default_kwargs['loglambda'], load = not catalogued, enforce_sigma_2_smaller = False) #this last argument is the crucial difference here
+            fitter = ONEHALO_fitter(PATH = filepath, initial_param_file = None, loglambda = default_kwargs['loglambda'], load = not catalogued, enforce_sigma_2_smaller = True) #this last argument is the crucial difference here
             fitters.append(fitter)
 
         fitters_and_mass_bins = list(zip(fitters, mass_bins))

@@ -451,7 +451,7 @@ class TWOHALO_fitter:
         bin_mask = self.bin_indices == bin_idx
         bin_velocities = self.velocities[bin_mask]
 
-        plt.figure()
+        plt.figure(figsize = (9,9))
         splitstring = self.massbin.split('_')
         firsthalf = splitstring[0].replace('M1',r'$M_{\mathrm{2h,p}}$') + ' = ' + splitstring[1] + ' dex'
         sechalf = splitstring[2].replace('M2','$M_{\mathrm{2h,s}}$') + ' = ' + splitstring[3] + ' dex'
@@ -464,22 +464,24 @@ class TWOHALO_fitter:
         bin_width= bin_edges[1] - bin_edges[0] 
         bin_widths = np.diff(bin_edges)  # The width of each bin
         number_density = bin_heights / bin_widths  # Normalize by bin width
-
-        plt.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black',
-                alpha=1, color='b', label = "N" + r'$_\mathrm{b}$' + f" = {rice_bins(bin_velocities.size)}")
-
-        DAT=np.linspace(np.min(bin_velocities),np.max(bin_velocities),1000)
         hist_area=np.sum(bin_heights)
 
-        plt.plot(DAT, hist_area * skewnorm_func(DAT, *best_params_skew_norm), c='red', label = r'Skew normal-distribution', lw = 2)
-        plt.plot(DAT, hist_area * skew_t_pdf(DAT, *best_params_skew_t), c='forestgreen', label = r'Skew $t$-distribution', lw = 2)
-        plt.legend()
+        plt.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black',
+                alpha=1, color='b', label =  r"N$_{\mathrm{2h}}$= " + f"{hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {rice_bins(bin_velocities.size)}")
+
+        DAT=np.linspace(np.min(bin_velocities),np.max(bin_velocities),1000)
+
+        plt.plot(DAT, hist_area * skewnorm_func(DAT, *best_params_skew_norm), c='red', label = r'Skew normal-distribution', lw = 3)
+        plt.plot(DAT, hist_area * skew_t_pdf(DAT, *best_params_skew_t), c='gold', label = r'Skew $t$-distribution', lw = 3)
+        plt.legend(loc= 'upper left', fontsize = 16)
 
         plt.xlabel(r'Two-halo velocity $v_{\mathrm{2h}}$ [km/s]')
         plt.ylabel('Density')
 
         plt.tight_layout()
         mkdir_if_non_existent('/disks/cosmodm/vdvuurst/figures/TWOHALO/Combined')
+        # plt.savefig(os.path.join('/disks/cosmodm/vdvuurst/figures/TWOHALO/Combined',
+        #                           f'{self.massbin}-rbin{bin_idx}_fit.pdf'))
         plt.savefig(os.path.join('/disks/cosmodm/vdvuurst/figures/TWOHALO/Combined',
                                   f'{self.massbin}-rbin{bin_idx}_fit.png'), dpi = 300)
         plt.close()
@@ -493,11 +495,11 @@ def parse_args():
                          default = "/net/hypernova/data2/FLAMINGO/L1000N1800/HYDRO_FIDUCIAL/SOAP-HBT/halo_properties_0077.hdf5")
     parser.add_argument("-M1","--mass_range_primary", type = float, nargs = '+', default=[3.5,4])
     parser.add_argument("-M2","--mass_range_secondary", type = float, nargs = '+', default=[4.5,5])
-    parser.add_argument('-F','--make_figures', type = bool, default = False)
-    parser.add_argument('-SF','--show_figures', type = bool, default = True)
+    parser.add_argument('-F','--make_figures', type = int, default = 1)
+    parser.add_argument('-SF','--show_figures', type = int, default = 1)
     # These two probably won't be touched but for the sake of generalizing they're included
     parser.add_argument('-N','--number_of_bound_particles', type = int, default = 100)
-    parser.add_argument('-C','--only_centrals', type = bool, default = True)
+    parser.add_argument('-C','--only_centrals', type = int, default = 1)
     
     return parser.parse_args()
 

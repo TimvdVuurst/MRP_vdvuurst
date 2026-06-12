@@ -8,11 +8,11 @@ from functions import *
 from onehalo_plotter import plot_distribution_gaussian_mod
 from json import dump
 from json import load as jsonload
-import emcee
 from corner import corner
-from functional_forms import * # also runs some code to create the functional_form catalogue in the all_combis variable
+from inspect import signature
 from time import time
 from MCMC import MCMC
+
 
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
 
@@ -54,7 +54,7 @@ class ONEHALO:
             self.IsCentral = handle["InputHalos/IsCentral"][:].astype(bool) 
             self.HaloIndices = np.arange(self.IsCentral.size)
             self.COMvelocity = handle["ExclusiveSphere/100kpc/CentreOfMassVelocity"][:]
-            self.SubHaloStellarMass = handle["ExclusiveSphere/100kpc/StellarMass"][:] # TODO: impose minimum, make histogram , je verwacht powerlaw met exponeential cut-off, cut bij de piek van de power law
+            self.SubHaloStellarMass = handle["ExclusiveSphere/100kpc/StellarMass"][:] 
             self.HaloCatalogueIndex = handle["InputHalos/HaloCatalogueIndex"][:]
             self.HostHaloIndex = handle["SOAP/HostHaloIndex"][:] # -1 for centrals
             self.COM = handle["ExclusiveSphere/100kpc/CentreOfMass"][:]
@@ -126,8 +126,8 @@ class ONEHALO:
             ax.plot(bin_centres, counts, c= 'black')
             ax.set_yscale('log')
             ax.set_xscale('log')
-            ax.set_ylabel('Counts', fontsize = 16)
-            ax.set_xlabel(r'$\log_{10} \left( M_{\star} / \mathrm{M}_{\odot}\right)$', fontsize = 16)
+            ax.set_ylabel('Counts')
+            ax.set_xlabel(r'$\log_{10} \left( M_{\star} / \mathrm{M}_{\odot}\right)$')
 
             xticks_pos = ax.get_xticks()
             xticks_labels = (np.log10(xticks_pos) + 10).astype(str) # Transform ticklabels to better units
@@ -145,9 +145,8 @@ class ONEHALO:
         relative_vels = SatVels - np.repeat(HostVels, subhalos_per_host, axis = 0)
         
         # Get the virial radii for all sattelites in order and transform coordinates
-        SatRvirs = np.repeat(self.Rvir[HostIndices], subhalos_per_host)
-        rel_dist = np.sqrt(np.square(relative_COMs).sum(axis = 1)) / SatRvirs 
-        relative_COMs = relative_COMs / SatRvirs[:, np.newaxis]
+        rel_dist = np.sqrt(np.square(relative_COMs).sum(axis = 1)) / self.SatRvirs 
+        relative_COMs = relative_COMs / self.SatRvirs[:, np.newaxis]
         HostMasses = np.repeat(HostMasses, subhalos_per_host, axis = 0)
 
         if self.verbose: print('All satellite data found, applying masks...')
@@ -163,9 +162,7 @@ class ONEHALO:
             file.create_dataset('rel_pos', data  = relative_COMs, dtype = np.float32)
             file.create_dataset('rel_dist', data = rel_dist, dtype = np.float32)
             file.create_dataset('rel_vels', data  = relative_vels, dtype = np.float32)
-            file.create_dataset('mass', data = HostMasses, dtype = np.float32)
-            # file.create_dataset('stellar_mass', data = SatStellarMass, dtype = np.float32)
-        
+            file.create_dataset('mass', data = HostMasses, dtype = np.float32)        
                 
         if create_subsample:
             np.random.seed(42)
@@ -176,7 +173,6 @@ class ONEHALO:
             subsample_dist = rel_dist[subsample_idx]
             subsample_pos = relative_COMs[subsample_idx, :]
             subsample_vels = relative_vels[subsample_idx, :]
-            subsample_stellarmass = SatStellarMass[subsample_idx]
 
             subsample_filename = filename.replace('.hdf5', '_subsampled.hdf5')
             with h5py.File(subsample_filename, 'w') as file:
@@ -184,7 +180,6 @@ class ONEHALO:
                 file.create_dataset('rel_vels', data  = subsample_vels, dtype = np.float32)
                 file.create_dataset('mass', data = subsample_mass, dtype = np.float32)
                 file.create_dataset('rel_dist', data = subsample_dist, dtype = np.float32)
-                # file.create_dataset('stellar_mass', data = subsample_stellarmass, dtype = np.float32)
 
     
     def create_catalogue(self, massbin: Tuple[np.float32,np.float32], filename: str, StellarMassCutOff: float | None = 0.8):
@@ -367,7 +362,7 @@ class ONEHALO_fitter:
         if hasattr(bins, '__call__'):
             bins = bins(data.size)
 
-        step_sizes = np.array([20., 15., 5e-3])[:, np.newaxis]
+        step_sizes = np.array([20., 15., 1e-2])[:, np.newaxis]
         if not use_binned:
             sampler = MCMC(nwalkers, log_likelihood_func,
                             args = (data, loglambda, kwargs['single_gauss'], kwargs['enforce_sigma_2_smaller']), step_sizes= step_sizes)
@@ -548,6 +543,9 @@ class ONEHALO_fitter:
         # always flip the sigmas in these specific bins
         if f'M_{self.lower_mass:.1f}-{self.upper_mass:.1f}-r_{rbin[0]:.2f}-{rbin[1]:.2f}' in kwargs['flip_bins']:
             kwargs['skip_rerun'] = True
+            kwargs['flip_sigmas'] = True
+        else:
+            kwargs['flip_sigmas'] = False
         
         rpath = os.path.join(datapath, kwargs['r_unit'], f'r_{rbin[0]:.2f}-{rbin[1]:.2f}.hdf5')
 
@@ -868,10 +866,7 @@ class ONEHALO_MADD_fitter:
 
         ## Clamping
 
-        # Trying to clamp lambda in a more smart way, does not work
-        # low_dist_mask = rel_dist < 0.25
         lambda_upper_bound = np.full(double_gauss_params.shape[1], 1)
-        # lambda_upper_bound[low_dist_mask] = 1.
 
         if upper_sigma_bound is None: # during fitting
             upper_sigma_bound = GLOBAL_PRIOR_RANGE[0][1]
@@ -879,7 +874,7 @@ class ONEHALO_MADD_fitter:
         else: # i.e. upper_sigma_bound got a value which only happens during initial conditions finding
             sigma_2_min = 50.
 
-        lower_bounds = np.array([GLOBAL_PRIOR_RANGE[0][0], sigma_2_min, GLOBAL_PRIOR_RANGE[2][0]])[:, np.newaxis]
+        lower_bounds = np.array([GLOBAL_PRIOR_RANGE[0][0], GLOBAL_PRIOR_RANGE[0][0], GLOBAL_PRIOR_RANGE[2][0]])[:, np.newaxis] # lower bound of 25 for sigmas to avoid spiking in histograms, i.e. very low sigma for a nonzero (or non-one) lambda.
 
         if constrain_sigmas: 
             upper_bounds = [np.repeat(upper_sigma_bound, double_gauss_params.shape[1]),
@@ -945,23 +940,25 @@ class ONEHALO_MADD_fitter:
 
         if os.path.isfile(os.path.join(filepath, f'function_combi_{combi_number}.json')) and not overwrite:
             return
+        
+        if functional_form != '':
+                functional_form = functional_form if functional_form.startswith('_') else '_' + functional_form
 
-        if 'subsample_results' in init_condition_method:
+        # The following for when we run on the full dataset. Should be called with init_condition_method = 'subsample'
+        if 'subsample' in init_condition_method:
             # Extract the initial conditions method from the input and read in the results from the subsampled data fit as initial conditions
-            init_condition_method = init_condition_method.split('-')[-1]
-            self.init_condition_path = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/MADD_subsample/{init_condition_method}'
+            self.init_condition_path = f'/disks/cosmodm/vdvuurst/data/OneHalo_param_fits/MADD_subsample/Nelder-Mead{functional_form}'
             with open(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.json')) as f:
                 subsample_dict = jsonload(f)
-                initial_params = np.array(subsample_dict['parameters'])
             
-            # From the initial conditions result, extract only the MCMC scales to use
-            _, MCMC_scales = np.load(os.path.join('/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions', init_condition_method, f'function_combi_{combi_number}.npy'))
+            initial_params = np.array(subsample_dict['parameters'])
+            
+            # From the initial conditions (Nelder-Mead) result, extract only the MCMC scales to use
+            _, MCMC_scales = np.load(os.path.join(f'/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions/Nelder-Mead{functional_form}',
+                                                   f'function_combi_{combi_number}.npy'))
 
         else:
-            if functional_form != '':
-                functional_form = functional_form if functional_form.startswith('_') else '_' + functional_form
-            else:
-                functional_form = functional_form
+            # Minimize initial conditions
             self.init_condition_path = f'/disks/cosmodm/vdvuurst/data/onehalo_MADD_initial_conditions/{init_condition_method}{functional_form}'
             initial_params, MCMC_scales = np.load(os.path.join(self.init_condition_path, f'function_combi_{combi_number}.npy'))
 

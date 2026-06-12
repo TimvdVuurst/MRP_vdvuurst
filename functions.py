@@ -5,10 +5,9 @@ from scipy.differentiate import derivative
 from typing import Callable
 import os
 from scipy.stats import skewnorm, t
-from scipy.special import gamma
 
 # sigma_1, sigma_2, lambda
-GLOBAL_PRIOR_RANGE = [[1., 2500.], [1., 2500.], [0., 1.]]
+GLOBAL_PRIOR_RANGE = [[25., 2500.], [25., 2500.], [0., 1.]]
 SQRT2PI = np.sqrt(2 * np.pi)
 SQRT2PI_FAC = 1 / SQRT2PI
 
@@ -561,7 +560,7 @@ def extract_mass_and_rad_from_filename(fname):
 def skewnorm_func(x,a,mu,sigma):
     return skewnorm.pdf(x, a, loc = mu, scale = sigma)
 
-def log_prior(theta):
+def log_prior_skewnorm(theta):
     # print(theta)
     a, mu, sigma = theta
     if -4. <= a <= 4. and  -500. <= mu <= 50. and 1. <= sigma <= 2500.:
@@ -570,7 +569,7 @@ def log_prior(theta):
     return np.inf
 
 def skew_gaussian_log_likelihood(params, data): #full with prior
-    prior = log_prior
+    prior = log_prior_skewnorm
     lp = prior(params)
     if not np.isfinite(lp):
         return np.inf

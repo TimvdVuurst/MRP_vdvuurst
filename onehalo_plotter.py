@@ -2,11 +2,9 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import h5py
-import os
 from tqdm import tqdm
-import argparse
-from functions import *
 from json import load
+from functions import rice_bins, modified_logspace, double_gaussian_loglambda, double_gaussian
 
 latex_formatter = {'sigma_1':r'$\sigma_1$', 'sigma_2': r'$\sigma_2$', 'lambda':r'$\lambda$', 'loglambda':r'$\log_{10}\left(\lambda\right)$'}
 
@@ -17,11 +15,11 @@ def format_plot():
     MEDIUM_SIZE = 12 * 2
     BIGGER_SIZE = 14 * 2
 
-    plt.rc('axes', titlesize=SMALL_SIZE)                     # fontsize of the axes title\n",
+    plt.rc('axes', titlesize=BIGGER_SIZE)                     # fontsize of the axes title\n",
     plt.rc('axes', labelsize=BIGGER_SIZE)                    # fontsize of the x and y labels\n",
     plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('legend', fontsize=MEDIUM_SIZE)                    # legend fontsize\n",
+    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
     mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
     mpl.rcParams['ytick.direction'] = 'in'
     mpl.rcParams['xtick.direction'] = 'in'
@@ -46,15 +44,16 @@ def format_plot():
     mpl.rcParams['ytick.minor.width'] = 1
 
 
-def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Double Gaussian', filename = 'Mfit', show = False, loglambda = False, single_gauss = False, sanitycheck = False):
+def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Double Gaussian', filename = 'Mfit',
+                                    show = False, loglambda = False, single_gauss = False, sanitycheck = False):
     sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
     # print(f'LOOK: {sigma1 = }, {sigma2 = }, {lambda_ =}')
     # Set plot appeareance
     fig = plt.figure(figsize=(7,7))
     frame=fig.add_subplot(1,1,1)
-    frame.set_xlabel('One-halo velocity $v_j$ [km/s]', fontsize=16)
-    frame.set_ylabel('Density', fontsize=16)
-    frame.tick_params(axis='both', which='major',length=6, width=2,labelsize=14)
+    frame.set_xlabel('One-halo velocity $v_j$ [km/s]')
+    frame.set_ylabel('Density')
+    frame.tick_params(axis='both', which='major',length=6, width=2)
 
     if loglambda:
         weighted_sigma = np.average([sigma1, sigma2], weights = [1-10**(lambda_), 10**(lambda_)])
@@ -93,15 +92,16 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
         i, param = 0, 'sigma_1'
         param_latex = param
         paramstr += latex_formatter[param_latex] +\
-              f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$\n'
+              f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$'
 
     if not single_gauss:
-        frame.text(0.155, 0.78, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
+        frame.text(0.175, 0.76, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 14)
     else:
-        frame.text(0.155, 0.82, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
+        frame.text(0.175, 0.84, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 14)
 
     hist_area=np.sum(bin_heights)
-    frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}\nN={hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {bins}", color='red')
+    frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}\nN"+ r'$_{\mathrm{g}}$' + f"={hist_area:.0f}, N" + 
+                                                                        r'$_\mathrm{b}$' + f" = {bins}", color='red')
 
     frame.legend(fontsize=12.5, loc="upper right")
 
@@ -152,7 +152,7 @@ def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = 
         r_range = modified_logspace(0, 5., 18)
         r_bins = np.array([[r_range[i], r_range[i+1]] for i in range(len(r_range) - 1)])
 
-    func = mod_gaussian_loglambda if loglambda else mod_gaussian
+    func = double_gaussian_loglambda if loglambda else double_gaussian
     
     if np.size(mass_bins) == 2: # just one massbin
         if np.size(r_bins) == 2: # just one rbin
@@ -187,40 +187,55 @@ def plot_onehalo_fit(mass_bins = None, r_bins = None, show = False, loglambda = 
 
 
 
-if __name__ == '__main__':
-    format_plot()
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-M1','--lower_mass', required = False, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive!')
-    parser.add_argument('-M2','--upper_mass', required = False, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive!') 
-    parser.add_argument('-r1','--lower_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!')
-    parser.add_argument('-r2','--upper_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!') 
-    parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Has alternate filename structure. Default is 0.')
-    parser.add_argument('-FL', '--single_gauss', type = int, default = 0, help = 'Fixes lambda to 0 to emulate a single Gaussian. Has alternate filename structure. Default is 0.')
-    parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Controls whether to show progress bars. Default is True')
 
-    args = parser.parse_args()
-    #TODO: implement something that allows you to plot all radial bins from a certain ondergrens (or until some upper limit) and vice versa for mass
-    if args.lower_mass and args.upper_mass:
-        lm, um = np.float32(args.lower_mass), np.float32(args.upper_mass)
-        if lm < 10 or  um < 10:
-            offset = 10
-        else:
-            offset = 0
-        mass_bin = [lm + offset, um + offset]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('-M1','--lower_mass', required = False, help = 'Lower bound of the mass range in dex above 10^10 Msun. This is inclusive!')
+    # parser.add_argument('-M2','--upper_mass', required = False, help = 'Upper bound of the mass range in dex above 10^10 Msun. This is inclusive!') 
+    # parser.add_argument('-r1','--lower_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!')
+    # parser.add_argument('-r2','--upper_radius', required = False, help = 'Lower bound of the radial range in Mpc. This is inclusive!') 
+    # parser.add_argument('-LL', '--loglambda', type = int, default = 0, help = 'Have the lambda parameter scale logarithmically instead of linearly. Has alternate filename structure. Default is 0.')
+    # parser.add_argument('-FL', '--single_gauss', type = int, default = 0, help = 'Fixes lambda to 0 to emulate a single Gaussian. Has alternate filename structure. Default is 0.')
+    # parser.add_argument('-V', '--verbose', type = int, default = 1, help = 'Controls whether to show progress bars. Default is True')
+
+    # args = parser.parse_args()
+    # #TODO: implement something that allows you to plot all radial bins from a certain ondergrens (or until some upper limit) and vice versa for mass
+    # if args.lower_mass and args.upper_mass:
+    #     lm, um = np.float32(args.lower_mass), np.float32(args.upper_mass)
+    #     if lm < 10 or  um < 10:
+    #         offset = 10
+    #     else:
+    #         offset = 0
+    #     mass_bin = [lm + offset, um + offset]
     
-    else:
-        mass_bin = None
+    # else:
+    #     mass_bin = None
     
-    if args.lower_radius and args.upper_radius:
-        r_bin = [np.float32(args.lower_radius), np.float32(args.upper_radius)]
-    else:
-        r_bin = None
+    # if args.lower_radius and args.upper_radius:
+    #     r_bin = [np.float32(args.lower_radius), np.float32(args.upper_radius)]
+    # else:
+    #     r_bin = None
     
-    plot_onehalo_fit(mass_bin, r_bin, loglambda = bool(args.loglambda), single_gauss = bool(args.single_gauss),
-                     show = False, # if calling from terminal we want to save the plots, not show them
-                     verbose = bool(args.verbose)
-                     )
+    # plot_onehalo_fit(mass_bin, r_bin, loglambda = bool(args.loglambda), single_gauss = bool(args.single_gauss),
+    #                  show = False, # if calling from terminal we want to save the plots, not show them
+    #                  verbose = bool(args.verbose)
+    #                  )
     
 
     

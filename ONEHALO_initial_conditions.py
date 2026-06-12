@@ -21,7 +21,7 @@ parser = ArgumentParser()
 parser.add_argument('-M', '--method', type = str, default = 'Nelder-Mead', help = 'Routine passed to scipy.minimize. Defaults to Nelder-Mead.')
 parser.add_argument('-SB', '--set_bounds', type = int, default = 1, help = 'Set bounds on the minimization (lambda subparameters >0, sigma_1 1000 km/s and sigma_2 < sigma_1 clamped). Defaults to 0 (False).')
 parser.add_argument('-NC', '--ncores', type = int, default = 30, help = 'Number of cores to run on in parallel. Defaults to 30.')
-parser.add_argument('-F', '--full_set', type = int, default = 0, help = 'Whether to use full set of function combinations or subsampled. Defaults to 0 (False), i.e. subsampled.')
+parser.add_argument('-F', '--full_set', type = int, default = 1, help = 'Whether to use full set of function combinations or subsampled. Defaults to 0 (False), i.e. subsampled.')
 parser.add_argument('-RR', '--rerun', type = int, default = 0, help = 'Whether to rerun all wanted combinations or skip those that already exist. Defaults to 0 (False), i.e. those that already exist will not be overwritten.')
 parser.add_argument('-D', '--delete_existing', type = int, default = 0, help = 'Whether to delete all initial conditions that have been ran for the specified method. Defaults to 0 (False).')
 parser.add_argument('-FF', '--functional_form', type = str, default = '', help = 'Additional information to separate results. Defaults to empty string.')
@@ -147,7 +147,25 @@ if __name__ == '__main__':
 
     mkdir_if_non_existent(DATA_SAVE_PATH)
 
-    from functional_forms import *
+    from functional_forms import linear_func, parabola_func, poly_3_func, poly_4_func, exponential_func, inverse_func, get_function_combinations
+
+    if args.functional_form != '':
+        name_to_func_dict = {'linear':linear_func, 'parabola':parabola_func, 'poly2':parabola_func, 'poly3':poly_3_func,
+                            'poly4':poly_4_func, 'inverse':inverse_func, 'inv':inverse_func, 'exp':exponential_func, 'exponential':exponential_func}
+        
+        param_to_change, func_form = args.functional_form.split('_')
+
+        match param_to_change:
+            case 'sigma1':
+                all_combis, all_names, combi_numbers, combi_subsample, combi_subsample_names, combi_subsamples_numbers = get_function_combinations(sigma_1_r_funcs=[name_to_func_dict[func_form]])
+            case 'sigma2':
+                all_combis, all_names, combi_numbers, combi_subsample, combi_subsample_names, combi_subsamples_numbers = get_function_combinations(sigma_2_r_funcs=[name_to_func_dict[func_form]])
+            case 'lambda':
+                all_combis, all_names, combi_numbers, combi_subsample, combi_subsample_names, combi_subsamples_numbers = get_function_combinations(lambda_r_funcs=[name_to_func_dict[func_form]])
+    else:
+        # Base functional forms
+        all_combis, all_names, combi_numbers, combi_subsample, combi_subsample_names, combi_subsamples_numbers = get_function_combinations()
+
 
     ## To delete the old combinations 
     if bool(args.delete_existing):
@@ -193,11 +211,11 @@ if __name__ == '__main__':
             else:
                 skip_rerun = False
 
-    if not skip_rerun:
-        NPROCS = args.ncores
-        with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
-            for _ in p.imap_unordered(create_and_store_initial_conditions, iterable_input):
-                pbar.update()
+    # if not skip_rerun:
+    #     NPROCS = args.ncores
+    #     with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
+    #         for _ in p.imap_unordered(create_and_store_initial_conditions, iterable_input):
+    #             pbar.update()
 
     ## Verifying that the initial conditions are good
     # The above initial conditions were found by not flipping the sigma values and enforcing sigma2 < sigma1
@@ -208,7 +226,7 @@ if __name__ == '__main__':
     MADD_test = ONEHALO_MADD_fitter()
 
     def get_init_DG_from_combi_nr(combi_nr, init_path):
-        func_combi = all_combis[combi_nr - 1] if use_full_set else combi_subsample[subsample_num_to_idx[combi_nr]]
+        func_combi = all_combis[combi_nr - 1] if use_full_set else combi_subsample[np.isin(combi_subsamples_numbers, combi_nr)]
         n_params_r, n_params_m, ntot = param_info(func_combi)
 
         init_guess, _ = np.load(f'{init_path}/function_combi_{combi_nr}.npy')
@@ -247,7 +265,6 @@ if __name__ == '__main__':
         print('Verifying initial conditions...')
         bad_cnrs = output_init_conditions(args.method).astype(int)
         cnrs_to_check = combi_numbers if use_full_set else combi_subsamples_numbers
-        # good_cnrs = np.delete(cnrs_to_check, np.array(bad_cnrs) - 1) if use_full_set else np.delete(cnrs_to_check, [subsample_num_to_idx[bcnr] for bcnr in bad_cnrs])
 
         print(f'We find {bad_cnrs.shape[0]} bad combinations and {cnrs_to_check.size - bad_cnrs.shape[0]} good ones. ', end ='')
 
@@ -266,19 +283,16 @@ if __name__ == '__main__':
                 bad_cnrs_mask = np.isin(combi_subsamples_numbers, bad_cnrs)
                 iterable_input = list(zip(combi_subsample[bad_cnrs_mask], combi_subsample_names[bad_cnrs_mask], combi_subsamples_numbers[bad_cnrs_mask]))
 
-            NPROCS = np.min((NPROCS, bad_cnrs.shape[0]))
-            with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
-                for _ in p.imap_unordered(create_and_store_initial_conditions_constrain_sigmas, iterable_input):
-                    pbar.update()
+            # NPROCS = np.min((NPROCS, bad_cnrs.shape[0]))
+            # with Pool(NPROCS) as p, tqdm(total=len(iterable_input)) as pbar:
+            #     for _ in p.imap_unordered(create_and_store_initial_conditions_constrain_sigmas, iterable_input):
+            #         pbar.update()
 
             bad_cnrs = verify_initials()
             print('Leaving it at that.')
         
         print('\nSaving indices of bad combinations...')
-        if functional_form != '':
-            savepath = f'./logs/bad_initial_conditions{'_' if use_full_set else '_subsampled_'}{functional_form}_combi_cnrs'
-        else:
-            savepath = f'./logs/bad_initial_conditions{'_' if use_full_set else '_subsampled_'}{functional_form}combi_cnrs'
+        savepath = f'/disks/cosmodm/vdvuurst/logs/bad_initial_conditions{'_' if use_full_set else '_subsampled_'}{functional_form}_combi_cnrs'
 
         np.save(savepath, bad_cnrs)
 
