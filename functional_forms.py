@@ -5,8 +5,8 @@ from inspect import signature
 def constant_func(x,a):
     return np.full_like(x, a)
 
-def linear_func(x, m, c):
-    return m * x + c
+def linear_func(x, a, b):
+    return a * x + b
 
 def parabola_func(x, a, b, c):
     return a * x**2 + b * x + c
@@ -34,7 +34,7 @@ def poly_4_func(x, a, b, c, d, e):
 
 # STANDARD FUNCTIONS OF R1h!
 lambda_r_funcs = [inverse_func]
-sigma_1_r_funcs = [poly_3_func]
+sigma_1_r_funcs = [poly_4_func]
 sigma_2_r_funcs = [linear_func]
 
 m_funcs = [linear_func, parabola_func, exponential_func]
@@ -93,7 +93,7 @@ if __name__ == '__main__':
 
     from json import dump
 
-    with open(f'/disks/cosmodm/vdvuurst/data/func_nums_to_names.json', 'w') as f:
+    with open(f'/disks/cosmodm/vdvuurst/func_nums_to_names.json', 'w') as f:
         dump(num_to_func_dict, f, indent = 2)
 
     print(f'There are {combi_subsample.shape[0]} subsampled function combinations')

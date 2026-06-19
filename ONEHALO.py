@@ -362,7 +362,7 @@ class ONEHALO_fitter:
         if hasattr(bins, '__call__'):
             bins = bins(data.size)
 
-        step_sizes = np.array([20., 15., 1e-2])[:, np.newaxis]
+        step_sizes = np.array([20., 15., 5e-3])[:, np.newaxis]
         if not use_binned:
             sampler = MCMC(nwalkers, log_likelihood_func,
                             args = (data, loglambda, kwargs['single_gauss'], kwargs['enforce_sigma_2_smaller']), step_sizes= step_sizes)
@@ -527,8 +527,10 @@ class ONEHALO_fitter:
                     plot_distribution_gaussian_mod(double_gaussian_loglambda, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = True)
             else:
                 if not kwargs['single_gauss']: 
+                    # plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.png', loglambda = False)
                     plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname='Double Gaussian', filename = filename + f'_fit{loglambda_str}.pdf', loglambda = False)
                 else: 
+                    # plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.png', loglambda = False, single_gauss = True)
                     plot_distribution_gaussian_mod(double_gaussian, param_dict, data, bins=bins, distname="Single Gaussian", filename = filename + f'_fit{loglambda_str}.pdf', loglambda = False, single_gauss = True)
         
         if kwargs['timeit']: 

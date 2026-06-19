@@ -49,7 +49,7 @@ def log_prior(theta, enforce_sigma_2_smaller: bool = False):
         if enforce_sigma_2_smaller:
             sigma_2_prior = sigma_2_prior * (sigma_2 < (sigma_1 - 5.))
     
-    lambda_prior = GLOBAL_PRIOR_RANGE[2][0] <= lambda_ <= GLOBAL_PRIOR_RANGE[2][1] 
+    lambda_prior = GLOBAL_PRIOR_RANGE[2][0] <= lambda_ <= GLOBAL_PRIOR_RANGE[2][1] -0.05 
 
     if sigma_1_prior and sigma_2_prior and lambda_prior:
         return 0.0
@@ -258,7 +258,7 @@ def double_gaussian_log_likelihood_vec(params: np.ndarray, min_half_v_sq: np.nda
 
     L = log_mu -( 3 * np.sum(np.log(norm))) #-log(norm) = log(1/norm) ! 
 
-    return -1*L - 1
+    return -1*L - L.size # we get a -1 from the integral for every data point (i.e. -M), but this is scaling which is not highly important
 
 
 # GOODNESS OF FIT STATISTICS (OUTDATED)

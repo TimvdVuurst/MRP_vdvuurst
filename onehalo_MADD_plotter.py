@@ -14,6 +14,7 @@ from warnings import filterwarnings
 # this might be a liiiitle dangerous but cleans up the output by a lot. that's because we often see invalid values in log10, but that's ok
 filterwarnings('ignore',category = RuntimeWarning)
 
+
 def format_plot():
     # Define some properties for the figures so that they look good
     SMALL_SIZE = 10 * 2 
@@ -21,17 +22,17 @@ def format_plot():
     BIGGER_SIZE = 14 * 2
 
     plt.rc('axes', titlesize=BIGGER_SIZE)                     # fontsize of the axes title\n",
-    plt.rc('axes', labelsize=BIGGER_SIZE)                    # fontsize of the x and y labels\n",
+    plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
     plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('legend', fontsize=MEDIUM_SIZE)                    # legend fontsize\n",
+    plt.rc('legend', fontsize=16)                    # legend fontsize\n",
     mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
     mpl.rcParams['ytick.direction'] = 'in'
     mpl.rcParams['xtick.direction'] = 'in'
     mpl.rcParams['mathtext.fontset'] = 'cm'
     mpl.rcParams['font.family'] = 'STIXgeneral'
 
-    mpl.rcParams['figure.dpi'] = 300
+    mpl.rcParams['figure.dpi'] = 100
 
     mpl.rcParams['xtick.minor.visible'] = True
     mpl.rcParams['ytick.minor.visible'] = True
@@ -49,10 +50,13 @@ def format_plot():
     mpl.rcParams['ytick.minor.width'] = 1
 
 
-def add_pretty_colorbar(im: mpl.image.AxesImage , ax: plt.Axes, fig: plt.Figure, label = ''):
+
+def add_pretty_colorbar(im: mpl.image.AxesImage , ax: plt.Axes, fig: plt.Figure, label = '', fontsize = 40, ticksize= 30):
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    fig.colorbar(im, cax=cax, label = label)
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.ax.tick_params(labelsize=ticksize)
+    cbar.set_label(label, fontsize = fontsize)
 
 class MADD_plotter:
     def __init__(self, init_method = 'Nelder-Mead', subsampled_functions = False, subsample_data = True):
@@ -89,7 +93,7 @@ class MADD_plotter:
 
         argsort_bics = np.argsort(bics)
         self.best_combi_nrs = combi_nrs[argsort_bics]
-        if not subsample_data: print(f'BEST CNRs: {self.best_combi_nrs}')
+        print(f'TOP 10 CNRs: {self.best_combi_nrs[:10]}')
         self.sorted_bics = bics[argsort_bics]
         self.subsample_data = subsample_data
 
@@ -113,21 +117,28 @@ class MADD_plotter:
 
         for param_idx in range(3): # loop over DG params
 
-            fig, (ax1, ax2) = plt.subplots(ncols = 2, figsize = (16, 8), sharey=False)
+            fig, (ax1, ax2) = plt.subplots(ncols = 2, figsize = (14, 7), sharey=False)
 
             dist_norm = plt.Normalize(np.min(self.MADD_fitter.rel_dist), np.max(self.MADD_fitter.rel_dist))
             mass_norm = plt.Normalize(np.min(self.MADD_fitter.halo_masses + 10), np.max(self.MADD_fitter.halo_masses +10))
 
             mass_scat = ax1.scatter(self.MADD_fitter.halo_masses+10, DG_params[param_idx], c = self.MADD_fitter.rel_dist, cmap = 'nipy_spectral', norm = dist_norm, s = 5)
 
-            add_pretty_colorbar(mass_scat, ax1, fig, r'$r_{\mathrm{1h}}$ [R$_{\mathrm{200m}}$]')
+            add_pretty_colorbar(mass_scat, ax1, fig, r'$r_{\mathrm{1h}}$ [R$_{\mathrm{200m}}$]', fontsize = 40)
 
             rad_scat = ax2.scatter(self.MADD_fitter.rel_dist, DG_params[param_idx], c = self.MADD_fitter.halo_masses+10, norm = mass_norm, cmap = 'nipy_spectral', s = 5)
 
-            add_pretty_colorbar(rad_scat, ax2, fig, 'Halo mass [dex]')
+            add_pretty_colorbar(rad_scat, ax2, fig, r'$M_{\mathrm{h}}$ [dex]', fontsize = 40)
 
-            ax1.set(ylabel = yaxes[param_idx], xlabel = r'$M_{\mathrm{h}}$ [dex]')
-            ax2.set(ylabel = yaxes[param_idx], xlabel = r'$r_{\mathrm{1h}}$ [R$_{\mathrm{200m}}$]')
+            ax1.set_ylabel( yaxes[param_idx], fontsize = 40)
+            ax1.set_xlabel(r'$M_{\mathrm{h}}$ [dex]', fontsize = 40)
+            ax2.set_ylabel(yaxes[param_idx], fontsize = 40)
+            ax2.set_xlabel( r'$r_{\mathrm{1h}}$ [R$_{\mathrm{200m}}$]', fontsize = 40)
+
+            ax1.tick_params(axis='both', labelsize=30)
+            ax2.tick_params(axis='both', labelsize=30)
+
+
             fig.tight_layout()
 
             subdir = './figures/onehalo_MADD/rainbow_plots'
@@ -139,7 +150,7 @@ class MADD_plotter:
             subdir = os.path.join(subdir, f'function_combi_{combi_nr}')
             mkdir_if_non_existent(subdir)
 
-            plt.savefig(os.path.join(subdir, f'{params[param_idx]}.png'), dpi = 400)
+            plt.savefig(os.path.join(subdir, f'{params[param_idx]}.png'), dpi = 300, bbox_inches = 'tight')
             plt.close()
 
     def plot_in_bin(self, best_params: np.ndarray, function_combi: list, combi_number: int,
@@ -168,9 +179,9 @@ class MADD_plotter:
                                                         n_params_r, masses_in_bin, rel_dist_in_bin)
         
         # Plotting
-        fig, ax = plt.subplots(figsize = (8,7))
-        ax.set_xlabel('One-halo velocity $v_j$ [km/s]', fontsize=16)
-        ax.set_ylabel('Density', fontsize=16)
+        fig, ax = plt.subplots(figsize = (7,7))
+        ax.set_xlabel('One-halo velocity $v_j$ [km/s]')
+        ax.set_ylabel('Density')
         ax.tick_params(axis='both', which='major',length=6, width=2, labelsize=14)
 
         # Bin velocity histogram and plot it
@@ -180,13 +191,13 @@ class MADD_plotter:
         bin_widths = np.diff(bin_edges)  # The width of each bin
         number_density = bin_heights / bin_widths  # Normalize by bin width
         hist_area=np.sum(bin_heights)
-        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black', label = r"N$_{\mathrm{g}}$= " + f"{hist_area:.0f}, N"
+        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black', label = r"N$_{\mathrm{g}}$= " + f"{hist_area:.0f}"+ "\nN"
                                                                                                         + r'$_\mathrm{b}$' + f" = {bins}")
 
-        # Add BIC score in textbox
-        ax.text(0.155, 0.83, f'BIC = {BIC_score:.2e}', transform=plt.gcf().transFigure,
-                backgroundcolor='white',zorder=-1,
-                bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
+        # # Add BIC score in textbox
+        # ax.text(0.155, 0.83, f'BIC = {BIC_score:.2e}', transform=plt.gcf().transFigure,
+        #         backgroundcolor='white',zorder=-1,
+        #         bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 12)
 
         # Get the lowest and highest point of any model at all velocities
         DAT = np.linspace(np.min(vel_data_in_bin),np.max(vel_data_in_bin), min_half_v_sq_in_bin.size)
@@ -203,19 +214,22 @@ class MADD_plotter:
         ax.plot(DAT.flatten(), ax_func(DG_center), label = 'Center bin model', color = 'blue', zorder = 1, lw = 1.5)
 
         # Finishing touches
-        ax.legend(fontsize=12.5, loc="upper right")
-        ax.set_title(f'{str_from_mbin(mbin).replace('_',' = ')} dex, {str_from_rbin(rbin).replace('_',' = ')} Rvir', fontsize = 20)
+        ax.legend(loc="upper left")
+        axtitle1 = f'{str_from_mbin(mbin).replace('_',' = ').replace('M', '$M_{\mathrm{h}}$')} dex,'
+        axtitle2 = f' {str_from_rbin(rbin).replace('_',' = ').replace('r','$r_{\mathrm{1h}}$')} ' + r'R$_{\mathrm{200m}}$'
+        ax.set_title(axtitle1 + axtitle2, fontsize = 20)
         
         filename = os.path.join(filepath, f'function_combi_{combi_number}')
         mkdir_if_non_existent(filename)
-        filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.pdf')
+        filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.png')
+        # filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.pdf')
 
         # Setting xlims for better viewing
         data_std = np.std(vel_data_in_bin)
         ax.set_xlim(-5*data_std, 5*data_std)
 
         fig.tight_layout()
-        fig.savefig(filename)
+        fig.savefig(filename, bbox_inches= 'tight', dpi = 200)
         plt.close()
 
 
@@ -233,7 +247,7 @@ class MADD_plotter:
         DG = self.MADD_fitter.get_double_gauss_parameters(split_params, func_combi, n_params_r)
 
         # Rainbow plots
-        self._rainbow_plots(DG, combi_nr)
+        # self._rainbow_plots(DG, combi_nr)
         print(f'CNR {combi_nr} finished rainbow plots.')
 
         # Histogram with shaded areas, need to manually adjust code here to fit to more bins
@@ -251,16 +265,17 @@ class MADD_plotter:
         rbins = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)]) 
 
         # Some example bins to show the model over larger ranges of mass and distance
-        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.0, 2.5], [1, 1.5], filepath = fp_for_hists)
-        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [4.0, 5.5], [0.00, 0.10], filepath = fp_for_hists)
-        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.5, 3.5], [1.5, 2.50], filepath = fp_for_hists)
+        # self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.0, 2.5], [1, 1.5], filepath = fp_for_hists)
+        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [4.0, 5.5], [0.01, 0.10], filepath = fp_for_hists)
+        # self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.5, 3.5], [1.5, 2.50], filepath = fp_for_hists)
+        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [3.0, 3.5], [0.01, 0.07], filepath = fp_for_hists)
 
-        if self.subsample_data: # All simple onehalo bins for comparison, takes too long for full data
-            fp_for_hists = os.path.join(fp_for_hists, 'simple_bins')
-            mkdir_if_non_existent(fp_for_hists)
-            for mbin in mass_bins:
-                for rbin in rbins:
-                    self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, mbin, rbin, filepath = fp_for_hists)
+        # if self.subsample_data: # All simple onehalo bins for comparison, takes too long for full data
+        #     fp_for_hists = os.path.join(fp_for_hists, 'simple_bins')
+        #     mkdir_if_non_existent(fp_for_hists)
+        #     for mbin in mass_bins:
+        #         for rbin in rbins:
+        #             self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, mbin, rbin, filepath = fp_for_hists)
 
 
 if __name__ == '__main__':
@@ -288,7 +303,8 @@ if __name__ == '__main__':
     if subsampled_data:
         iterable = MADD_plotter_instance.best_combi_nrs[:10]
     else:
-        iterable = MADD_plotter_instance.best_combi_nrs
+        iterable = [5447, 4315] 
+        # iterable = MADD_plotter_instance.best_combi_nrs
     
     # if not parallelize:
     #     for cnr in iterable:

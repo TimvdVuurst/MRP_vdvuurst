@@ -95,9 +95,11 @@ class TwoHaloPlotter:
         if savefig:
             # TODO: find better filename structure
             if self.is_subsample:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                # filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_subsampled_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
             else:
-                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
+                filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                # filename = f"/disks/cosmodm/vdvuurst/figures/vel_hists/vel_hist_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
             plt.savefig(filename,bbox_inches = 'tight')
         if showfig:
             plt.show()
@@ -125,8 +127,8 @@ class TwoHaloPlotter:
         self.skew_error = np.zeros(num_bins)
         self.kurt_error = np.zeros(num_bins)
         
-        fig,axes = plt.subplots(nrows = 4,figsize=(8,12), sharex=True)
-
+        fig,axes = plt.subplots(nrows = 2, ncols =2 ,figsize=(16,8), sharex=True)
+        axes = axes.flatten()
         for bin_idx in range(num_bins):
             bin_mask = bin_indices == bin_idx
             bin_velocities = self.velocities[bin_mask]
@@ -147,13 +149,13 @@ class TwoHaloPlotter:
         axes[0].plot(self.radial_bins[:-1], self.mean, marker='s', c = 'black')
         axes[0].set(ylabel = r'Mean $\mu$')
 
-        axes[1].plot(self.radial_bins[:-1], self.dispersion, marker = 's', c = 'forestgreen')
-        axes[1].set(ylabel = r'Dispersion $\sigma$')
+        axes[2].plot(self.radial_bins[:-1], self.dispersion, marker = 's', c = 'forestgreen')
+        axes[2].set(ylabel = r'Dispersion $\sigma$', xlabel = r'Two-halo distance $r_{\mathrm{2h}}$ [Mpc]')
 
-        axes[2].plot(self.radial_bins[:-1], self.skews, marker = 's', c= 'red')
+        axes[1].plot(self.radial_bins[:-1], self.skews, marker = 's', c= 'red')
         nonzero_error = np.nonzero(self.skew_error)
-        axes[2].errorbar(self.radial_bins[:-1][nonzero_error], self.skews[nonzero_error], yerr = self.skew_error[nonzero_error], fmt =',', capsize=3, color = 'red')
-        axes[2].set(ylabel = r'Skewness $s$')
+        axes[1].errorbar(self.radial_bins[:-1][nonzero_error], self.skews[nonzero_error], yerr = self.skew_error[nonzero_error], fmt =',', capsize=3, color = 'red')
+        axes[1].set(ylabel = r'Skewness $s$')
 
         axes[3].plot(self.radial_bins[:-1], self.kurt, marker='s', c = 'blue')
         nonzero_error = np.nonzero(self.kurt_error)
@@ -163,13 +165,15 @@ class TwoHaloPlotter:
         for ax in axes:
             ax.grid()
 
-        plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
+        fig.tight_layout()
+        # plt.subplots_adjust(wspace = 0, hspace=0) #NOTE: this might not actually do anything lol
         if savefig:
             # if self.is_subsample:
             #     filename = f"/disks/cosmodm/vdvuurst/figures/moments/moments_2halo_subsample_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
             # else:
             if filename is None:
-                filename = f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
+                filename = f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".png"
+                # filename = f"/disks/cosmodm/vdvuurst/figures/moments_with_errors/moments_2halo_M1_{self.mass_range_primary[0]}-{self.mass_range_primary[1]}_M2_{self.mass_range_secondary[0]}-{self.mass_range_secondary[1]}"+".pdf"
             plt.savefig(filename, bbox_inches = 'tight')
         if showfig:
             plt.show()
@@ -186,5 +190,5 @@ if __name__ == '__main__':
         if filepath == '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_13.0-13.5_M2_13.5-14.0.hdf5':
 
             plotter = TwoHaloPlotter(filepath)
-            plotter.plot_velocity_histograms()
+            # plotter.plot_velocity_histograms()
             plotter.plot_moments()

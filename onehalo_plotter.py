@@ -17,8 +17,8 @@ def format_plot():
 
     plt.rc('axes', titlesize=BIGGER_SIZE)                     # fontsize of the axes title\n",
     plt.rc('axes', labelsize=BIGGER_SIZE)                    # fontsize of the x and y labels\n",
-    plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('xtick', labelsize=MEDIUM_SIZE, direction='out')   # fontsize of the tick labels\n",
+    plt.rc('ytick', labelsize=MEDIUM_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
     mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
     mpl.rcParams['ytick.direction'] = 'in'
@@ -47,7 +47,6 @@ def format_plot():
 def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Double Gaussian', filename = 'Mfit',
                                     show = False, loglambda = False, single_gauss = False, sanitycheck = False):
     sigma1, sigma2, lambda_ = param_dict['sigma_1'], param_dict['sigma_2'], param_dict['lambda']
-    # print(f'LOOK: {sigma1 = }, {sigma2 = }, {lambda_ =}')
     # Set plot appeareance
     fig = plt.figure(figsize=(7,7))
     frame=fig.add_subplot(1,1,1)
@@ -84,28 +83,35 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
             else:
                 param_latex = param
 
-            paramstr += latex_formatter[param_latex] +\
-                  f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$ {unit}\n'
-    
+            if i != 2:
+                paramstr += latex_formatter[param_latex] +\
+                    f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$ {unit}\n'
+            else:
+                paramstr += latex_formatter[param_latex] +\
+                    f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$ {unit}'
+
     else:
         distname = 'Single Gaussian'
         i, param = 0, 'sigma_1'
         param_latex = param
         paramstr += latex_formatter[param_latex] +\
               f' = ${param_dict[param]:.{sig_digits}}^{{+{param_dict['errors'][i][1]:.{sig_digits}}}}_{{-{param_dict['errors'][i][0]:.{sig_digits}}}}$'
-
+    
     if not single_gauss:
-        frame.text(0.175, 0.76, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 14)
+        # frame.text(0.185, 0.80, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 14)
+        frame.text(0.175, 0.80, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 14)
     else:
         frame.text(0.175, 0.84, paramstr, transform=plt.gcf().transFigure, backgroundcolor='white',zorder=-1, bbox = {'boxstyle':'round','facecolor':'white'}, fontsize = 14)
 
     hist_area=np.sum(bin_heights)
+    # frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}", color='red', lw = 3)
     frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}\nN"+ r'$_{\mathrm{g}}$' + f"={hist_area:.0f}, N" + 
                                                                         r'$_\mathrm{b}$' + f" = {bins}", color='red')
 
+    # frame.legend(fontsize=16, loc="upper right")
     frame.legend(fontsize=12.5, loc="upper right")
 
-    frame.set_xlim(-4 * weighted_sigma, 4 * weighted_sigma)
+    frame.set_xlim(-5 * weighted_sigma, 5 * weighted_sigma)
     
     fig.tight_layout()
     if not show:
