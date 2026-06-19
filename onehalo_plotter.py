@@ -111,7 +111,7 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
     # frame.legend(fontsize=16, loc="upper right")
     frame.legend(fontsize=12.5, loc="upper right")
 
-    frame.set_xlim(-5 * weighted_sigma, 5 * weighted_sigma)
+    frame.set_xlim(-6 * weighted_sigma, 6 * weighted_sigma)
     
     fig.tight_layout()
     if not show:
