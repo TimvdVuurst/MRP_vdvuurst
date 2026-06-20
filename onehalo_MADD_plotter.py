@@ -191,8 +191,8 @@ class MADD_plotter:
         bin_widths = np.diff(bin_edges)  # The width of each bin
         number_density = bin_heights / bin_widths  # Normalize by bin width
         hist_area=np.sum(bin_heights)
-        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black', label = r"M = " + f"{hist_area:.0f}"+ "\nN"
-                                                                                                        + r'$_\mathrm{b}$' + f" = {bins}")
+        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black', label = r"$M$ = " + f"{hist_area:.0f}"+ "\n"
+                                                                                                        + r'$N_\mathrm{b}$' + f" = {bins}")
 
         # # Add BIC score in textbox
         # ax.text(0.155, 0.83, f'BIC = {BIC_score:.2e}', transform=plt.gcf().transFigure,

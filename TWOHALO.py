@@ -467,7 +467,7 @@ class TWOHALO_fitter:
         hist_area=np.sum(bin_heights)
 
         plt.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black',
-                alpha=1, color='b', label =  r"N$_{\mathrm{2h}}$= " + f"{hist_area:.0f}, N" + r'$_\mathrm{b}$' + f" = {rice_bins(bin_velocities.size)}")
+                alpha=1, color='b', label =  r"$N_{\mathrm{2h}}$= " + f"{hist_area:.0f}, " + r'$N_\mathrm{b}$' + f" = {rice_bins(bin_velocities.size)}")
 
         DAT=np.linspace(np.min(bin_velocities),np.max(bin_velocities),1000)
 
