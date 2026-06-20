@@ -17,22 +17,22 @@ filterwarnings('ignore',category = RuntimeWarning)
 
 def format_plot():
     # Define some properties for the figures so that they look good
-    SMALL_SIZE = 10 * 2 
-    MEDIUM_SIZE = 12 * 2
-    BIGGER_SIZE = 14 * 2
+    SMALL_SIZE = 8 * 2 
+    MEDIUM_SIZE = 10 * 2
+    BIGGER_SIZE = 12 * 2
 
     plt.rc('axes', titlesize=BIGGER_SIZE)                     # fontsize of the axes title\n",
     plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
     plt.rc('xtick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
     plt.rc('ytick', labelsize=SMALL_SIZE, direction='out')   # fontsize of the tick labels\n",
-    plt.rc('legend', fontsize=16)                    # legend fontsize\n",
+    plt.rc('legend', fontsize=SMALL_SIZE)                    # legend fontsize\n",
     mpl.rcParams['axes.titlesize'] = BIGGER_SIZE
     mpl.rcParams['ytick.direction'] = 'in'
     mpl.rcParams['xtick.direction'] = 'in'
     mpl.rcParams['mathtext.fontset'] = 'cm'
     mpl.rcParams['font.family'] = 'STIXgeneral'
 
-    mpl.rcParams['figure.dpi'] = 100
+    mpl.rcParams['figure.dpi'] = 300
 
     mpl.rcParams['xtick.minor.visible'] = True
     mpl.rcParams['ytick.minor.visible'] = True
@@ -221,8 +221,8 @@ class MADD_plotter:
         
         filename = os.path.join(filepath, f'function_combi_{combi_number}')
         mkdir_if_non_existent(filename)
-        filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.png')
-        # filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.pdf')
+        # filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.png')
+        filename = os.path.join(filename, f'{str_from_mbin(mbin)}_{str_from_rbin(rbin)}_fit.pdf')
 
         # Setting xlims for better viewing
         data_std = np.std(vel_data_in_bin)
@@ -265,10 +265,10 @@ class MADD_plotter:
         rbins = np.array([[r_range[i],r_range[i+1]] for i in range(len(r_range)-1)]) 
 
         # Some example bins to show the model over larger ranges of mass and distance
-        # self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.0, 2.5], [1, 1.5], filepath = fp_for_hists)
-        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [4.0, 5.5], [0.01, 0.10], filepath = fp_for_hists)
-        # self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.5, 3.5], [1.5, 2.50], filepath = fp_for_hists)
-        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [3.0, 3.5], [0.01, 0.07], filepath = fp_for_hists)
+        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.0, 2.5], [1, 1.5], filepath = fp_for_hists)
+        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [4.0, 5.5], [0.00, 0.10], filepath = fp_for_hists)
+        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [2.5, 3.5], [1.5, 2.50], filepath = fp_for_hists)
+        self.plot_in_bin(param_dict['parameters'], func_combi, combi_nr, n_params_r, n_params_m, BIC_score, [3.0, 3.5], [0.00, 0.07], filepath = fp_for_hists)
 
         # if self.subsample_data: # All simple onehalo bins for comparison, takes too long for full data
         #     fp_for_hists = os.path.join(fp_for_hists, 'simple_bins')
@@ -303,12 +303,8 @@ if __name__ == '__main__':
     if subsampled_data:
         iterable = MADD_plotter_instance.best_combi_nrs[:10]
     else:
-        iterable = [5447, 4315] 
+        iterable = [5447] 
         # iterable = MADD_plotter_instance.best_combi_nrs
-    
-    # if not parallelize:
-    #     for cnr in iterable:
-    #         MADD_plotter_instance.plot_rainbows_and_histograms_for_combi_nr(cnr)
 
     from multiprocessing import Pool
     NPROCS = len(iterable)

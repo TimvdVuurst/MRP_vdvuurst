@@ -34,7 +34,7 @@ def poly_4_func(x, a, b, c, d, e):
 
 # STANDARD FUNCTIONS OF R1h!
 lambda_r_funcs = [inverse_func]
-sigma_1_r_funcs = [poly_4_func]
+sigma_1_r_funcs = [poly_3_func]
 sigma_2_r_funcs = [linear_func]
 
 m_funcs = [linear_func, parabola_func, exponential_func]
