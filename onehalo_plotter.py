@@ -106,8 +106,8 @@ def plot_distribution_gaussian_mod(func, param_dict, data, bins, distname = 'Dou
 
     hist_area=np.sum(bin_heights)
     # frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}", color='red', lw = 3)
-    frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}\nN"+ r'$_{\mathrm{g}}$' + f"={hist_area:.0f}, N" + 
-                                                                        r'$_\mathrm{b}$' + f" = {bins}", color='red')
+    frame.plot(DAT,hist_area*func(DAT,sigma1,sigma2,lambda_),'-', label = f"{distname}\n"+ r'$M$' + f"={hist_area:.0f}, " + 
+                                                                        r'$N_\mathrm{b}$' + f" = {bins}", color='red')
 
     # frame.legend(fontsize=16, loc="upper right")
     frame.legend(fontsize=12.5, loc="upper right")

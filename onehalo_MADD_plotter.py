@@ -191,7 +191,7 @@ class MADD_plotter:
         bin_widths = np.diff(bin_edges)  # The width of each bin
         number_density = bin_heights / bin_widths  # Normalize by bin width
         hist_area=np.sum(bin_heights)
-        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black', label = r"N$_{\mathrm{g}}$= " + f"{hist_area:.0f}"+ "\nN"
+        ax.bar(bin_centers, number_density, width=bin_width, align='center', edgecolor = 'black', label = r"M = " + f"{hist_area:.0f}"+ "\nN"
                                                                                                         + r'$_\mathrm{b}$' + f" = {bins}")
 
         # # Add BIC score in textbox
@@ -299,7 +299,14 @@ if __name__ == '__main__':
 
     MADD_plotter_instance = MADD_plotter(init_method=init_method, subsample_data=subsampled_data)
     print('For the best combis, creating plots...')
-        
+    # print(MADD_plotter_instance.sorted_bics[:10] / MADD_plotter_instance.sorted_bics[0])
+    # print((MADD_plotter_instance.sorted_bics[:10] / MADD_plotter_instance.sorted_bics[0] -1 ) * 100)
+
+    # print(MADD_plotter_instance.best_combi_nrs[-1])
+    # print(MADD_plotter_instance.sorted_bics[-1] / MADD_plotter_instance.sorted_bics[0])
+    # print((MADD_plotter_instance.sorted_bics[-1] / MADD_plotter_instance.sorted_bics[0] -1 ) * 100)
+
+
     if subsampled_data:
         iterable = MADD_plotter_instance.best_combi_nrs[:10]
     else:
