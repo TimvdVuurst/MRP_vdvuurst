@@ -184,6 +184,7 @@ class TwoHaloPlotter:
 
 if __name__ == '__main__':
     format_plot()
+    from TWOHALO import TWOHALO_fitter
     root = '/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex'
     for file in tqdm(os.listdir(root)):
         filepath = os.path.join(root, file)
@@ -191,4 +192,9 @@ if __name__ == '__main__':
 
             plotter = TwoHaloPlotter(filepath)
             # plotter.plot_velocity_histograms()
-            plotter.plot_moments()
+            # plotter.plot_moments()
+
+            fitter_instance = TWOHALO_fitter('/disks/cosmodm/vdvuurst/data/M12-15.5_0.5dex/velocity_data_M1_13.0-13.5_M2_13.5-14.0.hdf5')
+            for bindx in range(2,19):
+                binpath = f'/disks/cosmodm/vdvuurst/data/TwoHalo_param_fits/Skew-t/M1_13.0-13.5_M2_13.5-14.0-rbin{bindx}.json'
+                fitter_instance.plot_dist_from_result(binpath, bindx)
