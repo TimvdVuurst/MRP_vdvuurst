@@ -14,9 +14,9 @@ import matplotlib.pyplot as plt
 
 def format_plot():
     # Define some properties for the figures so that they look good
-    SMALL_SIZE = 10 * 2 
-    MEDIUM_SIZE = 12 * 2
-    BIGGER_SIZE = 14 * 2
+    SMALL_SIZE = 8 * 2 
+    MEDIUM_SIZE = 10 * 2
+    BIGGER_SIZE = 12 * 2
 
     plt.rc('axes', titlesize=BIGGER_SIZE)                     # fontsize of the axes title\n",
     plt.rc('axes', labelsize=MEDIUM_SIZE)                    # fontsize of the x and y labels\n",
